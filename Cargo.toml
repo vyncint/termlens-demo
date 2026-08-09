@@ -1,0 +1,11 @@
+[package]
+name = "termlens-demo"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "myapp"
+path = "src/main.rs"
+
+[dev-dependencies]
+termlens = "0.1.0"
