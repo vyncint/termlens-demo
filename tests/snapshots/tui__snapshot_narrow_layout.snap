@@ -1,0 +1,21 @@
+---
+source: tests/tui.rs
+expression: t.screen()
+---
+size: 46x16  cursor: hidden
+┌ taskboard ─────────────────────────────────┐
+│ Tasks │ Stats │ Logs                       │
+└────────────────────────────────────────────┘
+┌ tasks (10) ────────────────────────────────┐
+│[x] HIGH Wire up the PTY reader             │
+│[x] HIGH Snapshot the screen grid           │
+│[ ] med  帳票をレンダリングする             │
+│[ ] HIGH Handle SIGWINCH                    │
+│[ ] low  Add bracketed paste                │
+│[ ] low  Support 🚀 emoji width             │
+│[ ] med  Document the wait heuristics       │
+│[x] low  Benchmark the parser               │
+│[ ] med  Ship v0.2 styles block             │
+│[ ] low  Windows ConPTY support             │
+└────────────────────────────────────────────┘
+ NORMAL  Tasks 1/10 ? help  q quit

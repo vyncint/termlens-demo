@@ -1,0 +1,31 @@
+---
+source: tests/tui.rs
+expression: t.screen()
+---
+size: 90x26  cursor: hidden
+┌ taskboard ─────────────────────────────────────────────────────────────────────────────┐
+│ Tasks │ Stats │ Logs                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ tasks (10) ───────────────────────────┐┌ detail ───────────────────────────────────────┐
+│[x] HIGH Wire up the PTY reader        ││title    Wire up the PTY reader                │
+│[x] HIGH Snapshot the screen grid      ││status   done                                  │
+│[ ] med  帳票をレンダリングする        ││priority HIGH                                  │
+│[ ] HIGH Handle SIGWINCH               ││tags     core, io                              │
+│[ ] low  Add bracketed paste           ││                                               │
+│[ ] low  Support 🚀 emoji width        ││Drain continuously so the kernel buffer never  │
+│[ ] med  Document the wait heuristics  ││stalls the child.                              │
+│[x] low  Benchmark the parser          ││                                               │
+│[ ] med  Ship v0.2 styles block        ││                                               │
+│[ ] low  Windows ConPTY support        ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+└───────────────────────────────────────┘└───────────────────────────────────────────────┘
+ NORMAL  Tasks 1/10 ? help  q quit

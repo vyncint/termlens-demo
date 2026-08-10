@@ -1,0 +1,31 @@
+---
+source: tests/tui.rs
+expression: t.screen()
+---
+size: 90x26  cursor: hidden
+┌ taskboard ─────────────────────────────────────────────────────────────────────────────┐
+│ Tasks │ Stats │ Logs                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ tasks (4) filtered ───────────────────┐┌ detail ───────────────────────────────────────┐
+│[x] HIGH Wire up the PTY reader        ││title    Wire up the PTY reader                │
+│[x] HIGH Snapshot the screen grid      ││status   done                                  │
+│[ ] HIGH Handle SIGWINCH               ││priority HIGH                                  │
+│[ ] med  Ship v0.2 styles block        ││tags     core, io                              │
+│                                       ││                                               │
+│                                       ││Drain continuously so the kernel buffer never  │
+│                      ┌ confirm ─────────────────────────────────┐                      │
+│                      │delete this task?                         │                      │
+│                      │Wire up the PTY reader                    │                      │
+│                      │                                          │                      │
+│                      │[y] delete   [n] cancel                   │                      │
+│                      └──────────────────────────────────────────┘                      │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+└───────────────────────────────────────┘└───────────────────────────────────────────────┘
+ CONFIRM  Tasks 1/4 filter:core ? help  q quit
