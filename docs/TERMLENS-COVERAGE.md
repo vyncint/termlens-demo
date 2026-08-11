@@ -1,287 +1,250 @@
-# What termlens 0.1 covers, and what it doesn't
+# termlens 0.2 — what improved, what's left
 
-Findings from testing `taskboard` — a TUI with tabs, a filtered list, a
-detail pane, a modal dialog, a text input with a live cursor, a help
-overlay, styled cells, CJK/emoji glyphs, a responsive layout, mouse
-support and bracketed paste.
+Re-run of the 0.1 study against the same subject: `taskboard`, a TUI with
+tabs, a filtered list, a detail pane, a modal dialog, a text input with a
+live cursor, a help overlay, styled cells, CJK/emoji glyphs, a responsive
+layout, mouse support, bracketed paste — now also DEC 2026 synchronized
+repaints and a SIGTERM shutdown path.
 
-**39 tests, all passing.** `tests/tui.rs` (28) is the coverage; `tests/limits.rs`
-(11) pins each gap below with a test that demonstrates it against the real
-binary. Nothing here is inferred from reading the crate — every claim was
-reproduced.
+**49 tests, all passing, 0 failures in 20 stress runs.** `tests/tui.rs` (40)
+is the coverage; `tests/limits.rs` (9) pins what remains. As before, nothing
+here is inferred from reading the crate — every claim was reproduced.
 
----
-
-## 1. What it covers, and covers well
-
-| Capability | How it's asserted | Test |
-|---|---|---|
-| Rendered text anywhere on screen | `contains` / `row_text` / `find` | most of `tui.rs` |
-| Cursor position + visibility | `screen.cursor()` | `filter_mode_shows_a_live_cursor…` |
-| Per-cell colour and attributes | `cell.style()` | `priority_and_status_are_colour_coded` |
-| Double-width glyph layout | `is_wide` / `is_wide_continuation` | `wide_glyphs_occupy_two_columns` |
-| Column arithmetic around wide glyphs | comparing border columns per row | `wide_glyphs_do_not_break_the_box_drawing` |
-| Typed input incl. F-keys, Ctrl chords | `Key` | `help_overlay_opens_from_question_mark_and_f1` |
-| Resize / SIGWINCH and responsive layout | `resize()` then re-assert | `resizing_narrow_drops_the_detail_pane` |
-| Exit code, and signal-vs-code | `wait_exit()` → `ExitStatus` | `ctrl_c_exits_with_130` |
-| Alt-screen teardown on exit | content vanishes after `wait_exit` | `quitting_restores_the_main_screen` |
-| Whole-screen regression snapshots | `assert_screen_snapshot!` | the four `snapshot_*` tests |
-
-The failure ergonomics are genuinely good: every timeout embeds the screen,
-so a CI log shows the frame the app was displaying rather than
-`assertion failed: false`. Several bugs in these tests were diagnosed from
-the error text alone.
+Headline: **11 of the 12 gaps from the 0.1 study are closed.** The one that
+mattered most — no frame boundary — is not merely closed but inverted into
+an advantage.
 
 ---
 
-## 2. The one that will bite you: there is no frame boundary
+## 1. What 0.2 fixed
 
-**This is the most important limitation, and it is not obvious from the
-docs.**
+| 0.1 finding | 0.2 |
+|---|---|
+| **No frame boundary; torn frames** | `wait_frame` — DEC 2026 synchronized updates |
+| No mouse in `Key` | `click`, `scroll`, `MouseMode`, mode-aware encoding |
+| No modifier + special-key chords | `Chord`: `Key::Right.ctrl()` |
+| No bracketed paste | `paste()`, wraps only if the app enabled 2004 |
+| Terminal never answers queries | answers DSR / DA1 / DA2 / `18t` / OSC 10–11 |
+| Styles absent from snapshots | `Screen::with_styles()` |
+| No title / alt-screen / input modes | `title()`, `alternate_screen()`, `bracketed_paste()`, `application_cursor()`, `mouse_mode()` |
+| `find` was single-row | `find` takes multi-row needles; plus `find_by`, `rect_text` |
+| No `current_dir` | `TerminalBuilder::current_dir` |
+| No signals, no pid | `Terminal::signal(Signal::Term)`, `pid()` |
+| One timeout for every wait | `wait_until_for(pred, timeout)` |
+| Cursor-key mode not tracked | `send` picks the DECCKM form automatically |
 
-The reader thread feeds each chunk of PTY output into the emulator as it
-arrives, and `wait_until` re-evaluates the predicate on every chunk. Nothing
-marks where one repaint ends and the next begins. A predicate can therefore
-fire on a **half-painted frame — including half a row**.
+### 1.1 `wait_frame` is the release
 
-This was not theoretical. An early version of the boot test did:
+The 0.1 study's main finding was that `wait_until` re-evaluates on every
+chunk of PTY output, so a predicate can fire on a half-painted frame —
+including half a row. That produced a genuinely flaky test at ~2 runs in 15,
+and forced three idioms on the whole suite: one combined predicate per
+assertion, anchored on whatever the app painted last, plus a `wait_idle`
+settle before every snapshot.
 
-```rust
-t.wait_until(|s| s.contains("NORMAL"))?;      // status bar, last row
-assert!(t.screen().contains("Tasks 1/10"));   // …also the status bar
-```
-
-It failed roughly 2 runs in 15 under parallel load, with this screen:
-
-```
- NORMAL
-```
-
-`NORMAL` had landed; ` Tasks 1/10 ? help  q quit` — the rest of the *same
-row* — was still in flight.
-
-Three rules follow, and all of them are in use in `tests/tui.rs`:
-
-1. **Put everything you assert into one predicate.** A `Screen` is a
-   consistent instant, so a single predicate that checks all the conditions
-   is race-free. Splitting into `wait_until(…)` then `assert!(screen…)` on a
-   *different* region is a race.
-2. **Wait on the last thing painted.** `common::spawn` waits for `"q quit"`,
-   the rightmost text of the bottom row, not for `"NORMAL"`. Which text is
-   "last" is a property of your app's render order — termlens can't tell you.
-3. **Settle before whole-screen snapshots.** A snapshot asserts on cells the
-   test never named, so a targeted predicate isn't enough; `common::settle`
-   calls `wait_idle(100ms)` first. This is a heuristic, and the crate is
-   honest about that — but it's the only tool available.
-
-Rule 1 also breaks down after a **resize**, because the old frame is still
-on the grid (merely clipped) until the app handles SIGWINCH:
+With `wait_frame` all of that disappears. Compare the same test:
 
 ```rust
-t.resize(50, 20)?;
-t.wait_until(|s| s.cols() == 50 && s.contains("tasks (10)"))?;  // ← both true of the STALE frame
-```
-
-The fix is to wait for something only the new geometry can produce — here,
-a complete status bar on the last row of a 20-row screen.
-
-> `wait_frame`, built on DEC mode 2026 (synchronized output), is on the
-> crate's roadmap and would close this cleanly.
-
----
-
-## 3. Input you cannot express
-
-### 3.1 Mouse events
-`Key` has no mouse variants. Any mouse-driven code path — click-to-select,
-drag, scroll wheel — is reachable only by hand-encoding a report:
-
-```rust
-t.send_str("\x1b[<0;10;7M");   // SGR press, button 0, 1-based col;row
-t.send_str("\x1b[<0;10;7m");   // release
-```
-
-That works (`mouse_clicks_require_hand_rolled_escape_bytes`), but the test
-now owns a protocol detail the typed API exists to hide, and nothing checks
-it against the tracking mode the app actually enabled (1000 / 1002 / 1006).
-
-### 3.2 Modifier + special-key chords
-`Key::Ctrl` takes a `char` and encodes a C0 byte, so **Ctrl-Right,
-Shift-Up, Alt-PageDown and every other modifier+special-key combination
-have no representation.** These are common TUI bindings. Workaround is the
-raw CSI-modifier form, `"\x1b[1;5C"` for Ctrl-Right
-(`ctrl_arrow_chords_are_not_expressible_as_a_key`).
-
-### 3.3 Bracketed paste
-A paste is one `Paste` event, not a burst of key presses, and `Key` cannot
-produce one. You must write the wrapper literally:
-`"\x1b[200~text\x1b[201~"` (`bracketed_paste_has_no_typed_api`). Focus
-in/out events (`CSI I` / `CSI O`) are in the same position.
-
-### 3.4 `Esc` is ambiguous on the wire, and there is no inter-key delay
-`Key::Esc` sends a bare `0x1B`. Followed immediately by another key, the
-bytes are *identical* to an Alt chord, and every input parser resolves it
-the same way — as one Alt chord. Real keyboards are saved by the human
-delay between presses; `send` writes back-to-back with none, and there is
-no `send_after(delay)`.
-
-```rust
+// 0.1 — everything asserted has to be in one predicate, and you have to
+// know that the status bar's *tail* is the last thing painted.
 t.send(Key::Esc);
-t.send(Key::Char('?'));   // app sees Alt('?'), and the Esc is lost
+t.wait_until(|s| s.contains("tasks (10)") && !s.contains("filter:"))?;
+
+// 0.2 — a frame is published only when it is complete.
+t.send(Key::Esc);
+t.wait_frame(|s| s.contains("tasks (10)"))?;
+assert!(!t.screen().contains("filter:"));
 ```
 
-Verified both ways in `esc_immediately_followed_by_a_key_is_read_as_alt`.
-The fix is to make the first key's effect observable and wait for it before
-sending the second — which only works if it *has* an observable effect.
+`common::spawn` shows it most plainly: it now waits for `"NORMAL"`, the
+exact predicate that was racy in 0.1 and had to be replaced with `"q quit"`.
+Snapshots no longer need settling either — the frame `wait_frame` returns on
+is complete by construction, so the `settle()` helper is gone.
 
-### 3.5 Cursor-key mode is not tracked
-`Key::Up` always sends `ESC [ A`, never the `ESC O A` that DECCKM
-application-cursor mode implies. Mainstream parsers accept both, so this is
-latent rather than active — but an app with a strict hand-rolled parser
-would see the wrong key. Documented in the crate's `keys.rs`.
+**It also does something the 0.1 study didn't ask for.** A completed frame is
+*retained*, so a frame the app immediately overwrites is still observable.
+taskboard draws a `SAVING` frame on SIGTERM and then wipes it leaving the
+alt screen. Measured over 5 runs each:
 
----
+| | caught `SAVING` |
+|---|---|
+| `wait_frame` | **5 / 5** |
+| `wait_until` | 2 / 5 |
 
-## 4. State you cannot observe
+`wait_until` is racing the teardown; `wait_frame` is reading a frame that
+already happened. That turns "assert on a transient state" from unreliable
+into routine.
 
-### 4.1 No scrollback — at all
-The emulator is built with **zero** scrollback rows. Anything scrolled off
-the top is unrecoverable (`output_scrolled_off_the_top_is_unrecoverable`),
-and resizing does not reflow. Fine for a full-screen TUI; a hard wall for a
-log-spewing CLI where the interesting line is 200 rows back.
+The error when an app emits no synchronized updates is a model of its kind —
+it names the cause and the remedy rather than just reporting a timeout:
 
-### 4.2 Styles are captured but never snapshotted
-`Cell::style()` exposes fg, bg, bold, dim, italic, underline and reverse —
-and assertions on them work well. But the `Display`/snapshot format is text
-only, so **a regression that changes only styling is invisible to
-`assert_screen_snapshot!`**. Moving the selection highlight from row 1 to
-row 2 leaves the snapshot text byte-identical
-(`moving_the_highlight_does_not_change_the_snapshot_text`). Style coverage
-has to be written cell by cell, by hand. (`with_styles()` is slated for v0.2.)
+> a complete frame — but the application never emitted a DEC 2026
+> synchronized update. wait_frame needs repaints bracketed in
+> BeginSynchronizedUpdate/EndSynchronizedUpdate; for other apps use
+> wait_until
 
-### 4.3 Terminal state that isn't a cell
-`Screen` is a grid plus a cursor position and visibility flag. There is no
-accessor for:
+### 1.2 Input is mode-aware, not just typed
 
-- the **window title** the app set via OSC 0 (vt100 tracks it; termlens
-  doesn't surface it)
-- whether the **alternate screen** is active — only inferable, e.g. from the
-  frame vanishing on exit
-- **cursor shape or blink** (`DECSCUSR`)
-- **OSC 8 hyperlink** targets
-- **OSC 52 clipboard** writes
-- **sixel / kitty graphics** — not modelled by the vt100 backend
+The new input APIs read the modes the application actually set, rather than
+assuming:
 
-Pinned in `out_of_band_terminal_state_is_only_observable_by_inference`.
+- `paste("core")` wraps in `ESC[200~ … ESC[201~` **only because** the app
+  enabled mode 2004; without it the bytes go through plain, like a real
+  terminal.
+- `click(col, row)` encodes for the tracking mode the app enabled (SGR vs
+  legacy), sends a release only if that mode reports one, and **refuses with
+  a clear error** if the app enabled no tracking at all:
+  `the application has not enabled mouse tracking (no CSI ?9/?1000/?1002/?1003 h was seen)`.
+  Feeding mouse bytes to an app that isn't listening — which is what 0.1's
+  hand-rolled workaround did silently — is now impossible by accident.
+- `send(Key::Up)` emits `ESC O A` instead of `ESC [ A` while the app has
+  DECCKM set.
 
-### 4.4 stdout and stderr are one stream
-A PTY has a single output stream, so "assert this went to stderr" is not a
-question termlens can answer (`stdout_and_stderr_are_indistinguishable`).
-Inherent to PTY testing, not a termlens defect — but it does mean stderr
-diagnostics can't be tested separately from UI output.
+Reading `mouse_mode()` back is genuinely useful: it revealed that
+crossterm's `EnableMouseCapture` turns on **1003 (any-motion)**, not 1000.
 
----
+### 1.3 Query answering
 
-## 5. The terminal never answers back
+0.1's sharpest failure mode was that a capability-probing app hung forever
+and the timeout blamed your predicate. 0.2 answers the common probes, and
+the answers are *real* rather than canned — asking for the cursor position
+from row 5, column 10 replies `ESC[5;10R`:
 
-termlens renders what the app writes; it never writes back. An app that
-*asks* the terminal a question gets silence:
+| query | reply |
+|---|---|
+| `CSI 6 n` (DSR cursor) | `ESC[<row>;<col>R`, the true cursor |
+| `CSI 5 n` (status) | `ESC[0n` |
+| `CSI c` (DA1) | `ESC[?62;22c` — VT220 + ANSI colour |
+| `CSI > c` (DA2) | `ESC[>1;10;0c` |
+| `CSI 18 t` (text area) | `ESC[8;<rows>;<cols>t` |
+| `OSC 10/11` (fg/bg colour) | `rgb:rrrr/gggg/bbbb`, background settable via `background_rgb` |
 
-- DSR cursor-position report (`CSI 6 n`)
-- DA1/DA2 device attributes
-- OSC 11 background-colour query (used for light/dark detection)
-- kitty keyboard-protocol capability probes
-- `XTGETTCAP`
+DA1 deliberately claims only what the emulator can render — no sixel, no
+kitty graphics. That's the honest choice: an app that trusts the reply won't
+emit output the grid would mangle.
 
-In `terminal_queries_are_never_answered`, a shell issues `CSI 6 n` and
-blocks on `read`; the wait can only end in a timeout. **A TUI that probes
-capabilities at startup will hang under test rather than fail informatively**
-— and the timeout error will point at your predicate, not at the unanswered
-query, which makes it an unpleasant thing to debug.
+For the probes it still can't answer, the timeout now names them:
 
-Worth knowing before adopting: crossterm and ratatui don't probe by default,
-which is why `taskboard` works. Libraries that *do* — or your own
-light/dark detection — will not.
+> — note: the application queried the terminal (`^[[?u`) and received no
+> answer; if it is blocked waiting for that reply, this is the cause
 
----
+`answer_queries(false)` reproduces 0.1's behaviour deliberately, and keeps
+the diagnostic.
 
-## 6. Query API gaps
+### 1.4 Styles in snapshots
 
-- **`find` is single-row only.** `contains` joins rows with `\n` and matches
-  across them; `find` scans row by row and returns `None` for a multi-row
-  needle (`find_cannot_locate_text_that_spans_rows`). Locating a box-drawn
-  widget means finding one row and doing the arithmetic yourself.
-- **No region queries.** No "text within this rect", no "find the bold
-  text", no "which cells are reversed". `tests/common/mod.rs` grew a
-  `pane_text(screen, row, cols)` helper within the first hour; something
-  like it belongs in the crate.
-- **No style-aware search.** Finding *the highlighted row* means scanning
-  every cell yourself.
+`with_styles()` appends a per-row span block to the snapshot:
 
----
+```
+4: 1-4 fg=2 bold reverse; 5-9 fg=1 bold reverse; 10-31 dim reverse; 42-50 fg=6
+5: 1-4 fg=2; 5-9 fg=1 bold; 10-33 dim; 42-50 fg=6
+25: 0-7 fg=15 bg=4 bold; 20-33 fg=8
+```
 
-## 7. Process and platform
+Moving the selection highlight one row now changes the diff — the exact
+regression that 0.1's text-only snapshots could not see. Compact enough to
+read in a review, and plain snapshots stay text-only, so it's opt-in per
+assertion rather than a format change.
 
-- **No working directory on the builder.** `TerminalBuilder` has `size`,
-  `timeout`, `arg`/`args`, `env`/`env_clear` — but no `current_dir`. Testing
-  a CLI that behaves differently per directory means `cd … && …` through a
-  shell.
-- **No signal delivery.** The child's pid isn't exposed and there's no
-  `kill`/`signal` method, so graceful-shutdown-on-SIGTERM and
-  signal-death paths can't be tested. `Drop` kills, and that's the only
-  lever.
-- **One timeout per `Terminal`.** The builder's `timeout` applies to every
-  `wait_*`; there's no per-call override. A suite that wants one slow wait
-  and many fast ones has to pick the slow value for all of them — which is
-  what makes a genuinely hung app take the full timeout on the *first*
-  failing predicate.
-- **`send` panics rather than returning `Result`** if the child is gone. A
-  deliberate, defensible choice — but it means "app died mid-input" can't be
-  handled gracefully in a test.
-- **Unix only.** `portable-pty` speaks ConPTY, the harness doesn't yet.
-- **Instant-exit output loss.** A child that writes and exits within its
-  first milliseconds can lose output to PTY teardown, macOS especially. The
-  crate's advice is to end such scripts with a `read`; every `spawn_sh`
-  helper in `tests/limits.rs` does exactly that.
-- **Spawn/teardown serialize process-wide.** A global lifecycle mutex
-  (correctly — it fixes a real macOS `revoke()` race) means a large parallel
-  suite queues on PTY setup and teardown.
+### 1.5 Smaller things that removed real friction
+
+- **`find_by(|c| c.style().reverse)`** answers "where did the highlight go"
+  in one call. 0.1 needed a hand-written cell scan.
+- **`rect_text(0..40, 4..8)`** isolates a pane. The 0.1 suite grew exactly
+  this helper by hand within the first hour.
+- **`signal(Signal::Term)` + `pid()`** made the graceful-shutdown path
+  testable at all — and `signal` refuses once the child is reaped, rather
+  than letting you signal a recycled pid.
+- **`Error::screen()`** gives uniform access to the screen from any error.
+- **`wait_until_for`** takes the one known-slow wait off the builder timeout.
 
 ---
 
-## 8. Determinism notes
+## 2. What is still a limitation
 
-Nothing here is termlens's fault, but it constrains what you can test:
+Nine, down from twelve — and none of them is the kind of thing that made
+0.1's suite flaky.
 
-- **Animations and clocks make snapshots flaky.** `taskboard` deliberately
-  has neither. A spinner would need to be frozen behind a test flag.
-- **`wait_idle` is evidence, not proof.** "No output for N ms" can resolve
-  early on a slow machine mid-render, and costs a real N ms every call.
-- **`env_clear()` is essential and easy to forget.** Without it a
-  developer's `LS_COLORS`, `COLORTERM` or `NO_COLOR` can change a snapshot.
+### 2.1 `wait_frame` retains one frame, not a history
+Only the most recently completed frame is kept, so when several complete
+inside one read burst the earlier ones are unreachable. Measured: three
+frames emitted in a single write, and catching the first is a coin flip
+(1/3); with pauses between them, 3/3. A progress counter ticking 1→2→3 in
+one burst is only ever observable at 3. Pinned by
+`only_the_newest_frame_of_a_burst_survives`, which makes it deterministic by
+waiting for the last frame first and then showing the first is gone.
+
+### 2.2 `wait_frame` requires the application to opt in
+It works only for apps that bracket repaints in DEC 2026. For a plain CLI,
+or a TUI that hasn't opted in, it can never succeed and you are back to
+`wait_until` and the full 0.1 discipline. taskboard had to be modified to
+emit synchronized updates before any of this suite could use it — worth
+knowing that the headline feature is conditional on the subject's
+cooperation. (`wait_frame_is_useless_without_synchronized_updates`)
+
+### 2.3 `Esc` followed by a key is still read as Alt
+Byte-identical to an Alt chord, and there is still no `send_after(delay)` —
+so whether the app sees one Alt chord or two key presses depends on whether
+its input loop happens to read the two writes together. Now clearly
+documented on `Key::Esc`, with the wait-for-the-effect remedy. The remedy
+only works when the `Esc` *has* an observable effect.
+
+Worth stressing because it caught me twice: a test that asserted the merged
+outcome was itself flaky at ~1 run in 5 once the app switched from a
+blocking read to a poll loop. `esc_immediately_followed_by_a_key_is_still_read_as_alt`
+now sends `"\x1b?"` as one write to make the hazard deterministic.
+
+### 2.4 The mouse API is one button
+`click` sends button 0 and `Scroll` has only `Up`/`Down`. No right- or
+middle-click, no drag, no modifier+click (Ctrl-click to multi-select is a
+common TUI idiom), no horizontal wheel. These still need hand-encoded SGR
+bytes — exactly what *all* mouse input needed in 0.1. Given how well
+`click` reads the app's mode, the asymmetry stands out.
+(`right_click_and_drag_still_need_hand_rolled_bytes`)
+
+### 2.5 Some queries remain unanswerable
+The kitty keyboard probe (`CSI ? u`), DA3, OSC 12, `DECRQM`, `XTGETTCAP`. An
+app that blocks on one still hangs — but the timeout names it, which turns
+a strace-level mystery into a one-line diagnosis.
+
+### 2.6 No scrollback
+Zero scrollback rows, and resizing does not reflow. Anything scrolled off
+the top is unrecoverable. Fine for a full-screen TUI, still a hard wall for
+a log-spewing CLI. Listed in the crate's own known limitations.
+
+### 2.7 stdout and stderr are one stream
+Inherent to PTYs, not a defect — but "assert this went to stderr" remains
+unanswerable.
+
+### 2.8 Per-call timeouts only on `wait_until`
+There is no `wait_frame_for` or `wait_idle_for`. A frame-driven suite that
+needs one long wait must raise the builder timeout for every wait it makes.
+Since `wait_frame` is now the recommended primitive, this is the gap most
+likely to be felt next. (`only_wait_until_takes_a_per_call_timeout`)
+
+### 2.9 Still outside the model
+Cursor shape and blink (`DECSCUSR`), OSC 8 hyperlink targets, OSC 52
+clipboard writes, sixel/kitty graphics. Unix only. `send` still panics
+rather than returning `Result` when the child is gone.
 
 ---
 
-## Summary
+## Verdict
 
-| # | Gap | Workaround | Pinned by |
-|---|---|---|---|
-| 1 | No frame boundary; torn frames | one predicate; wait on last-painted text; `wait_idle` before snapshots | `a_frame_is_only_complete_once_its_last_cell_arrives` |
-| 2 | No mouse in `Key` | hand-rolled SGR bytes | `mouse_clicks_require_hand_rolled_escape_bytes` |
-| 3 | No modifier+special-key chords | raw CSI-modifier bytes | `ctrl_arrow_chords_are_not_expressible_as_a_key` |
-| 4 | No bracketed paste / focus events | literal `ESC[200~…ESC[201~` | `bracketed_paste_has_no_typed_api` |
-| 5 | `Esc`+key reads as Alt; no send delay | wait on the Esc's effect first | `esc_immediately_followed_by_a_key_is_read_as_alt` |
-| 6 | Terminal never answers queries | none — app hangs, test times out | `terminal_queries_are_never_answered` |
-| 7 | Zero scrollback, no reflow | size the screen to fit | `output_scrolled_off_the_top_is_unrecoverable` |
-| 8 | Styles absent from snapshots | per-cell assertions by hand | `moving_the_highlight_does_not_change_the_snapshot_text` |
-| 9 | No title / alt-screen / cursor-shape / OSC 8 / OSC 52 | infer from the grid | `out_of_band_terminal_state_is_only_observable_by_inference` |
-| 10 | stdout and stderr merged | none (inherent to PTYs) | `stdout_and_stderr_are_indistinguishable` |
-| 11 | `find` is single-row | find a row, compute offsets | `find_cannot_locate_text_that_spans_rows` |
-| 12 | No `current_dir`, no signals, one timeout | shell wrappers | — |
+0.2 closes the gaps that made 0.1 awkward, and closes them properly rather
+than superficially: the input APIs read the application's real modes, the
+query answers are computed rather than canned, and the error messages name
+causes. The suite that needed three defensive idioms in 0.1 now reads like
+ordinary integration tests, and got *shorter* while covering more.
 
-**Verdict.** For a keyboard-driven, full-screen TUI — the case it targets —
-termlens covers essentially everything that matters, and the screen-carrying
-errors make failures cheap to diagnose. The gaps worth knowing before you
-adopt it are **#1** (it will produce flaky tests until you learn the
-idioms), **#6** (a capability-probing app hangs), and **#8** (snapshots
-silently ignore styling).
+If you want a ranking of what to do next, from this study:
+
+1. **`wait_frame_for`** (§2.8) — smallest change, and `wait_frame` being the
+   recommended primitive makes the missing override conspicuous.
+2. **A fuller mouse API** (§2.4) — button, drag, modifiers. The one place
+   0.2's own standard isn't met.
+3. **A short frame history** (§2.1) — even two or three retained frames
+   would make rapid intermediate states assertable.
+
+Nothing in the remaining list threatens correctness or produces flaky tests.
+That was not true of 0.1.

@@ -1,0 +1,45 @@
+---
+source: tests/tui.rs
+expression: t.screen().with_styles()
+---
+size: 90x26  cursor: hidden
+┌ taskboard ─────────────────────────────────────────────────────────────────────────────┐
+│ Tasks │ Stats │ Logs                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ tasks (10) ───────────────────────────┐┌ detail ───────────────────────────────────────┐
+│[x] HIGH Wire up the PTY reader        ││title    Wire up the PTY reader                │
+│[x] HIGH Snapshot the screen grid      ││status   done                                  │
+│[ ] med  帳票をレンダリングする        ││priority HIGH                                  │
+│[ ] HIGH Handle SIGWINCH               ││tags     core, io                              │
+│[ ] low  Add bracketed paste           ││                                               │
+│[ ] low  Support 🚀 emoji width        ││Drain continuously so the kernel buffer never  │
+│[ ] med  Document the wait heuristics  ││stalls the child.                              │
+│[x] low  Benchmark the parser          ││                                               │
+│[ ] med  Ship v0.2 styles block        ││                                               │
+│[ ] low  Windows ConPTY support        ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+│                                       ││                                               │
+└───────────────────────────────────────┘└───────────────────────────────────────────────┘
+ NORMAL  Tasks 1/10 ? help  q quit
+
+styles:
+1: 2-6 fg=3 bold
+4: 1-4 fg=2 bold reverse; 5-9 fg=1 bold reverse; 10-31 dim reverse; 32-39 bold reverse; 42-50 fg=6; 51-72 bold
+5: 1-4 fg=2; 5-9 fg=1 bold; 10-33 dim; 42-50 fg=6; 51-54 fg=2
+6: 1-4 fg=8; 5-9 fg=3; 42-50 fg=6
+7: 1-4 fg=8; 5-9 fg=1 bold; 42-50 fg=6
+8: 1-4 fg=8; 5-9 fg=2
+9: 1-4 fg=8; 5-9 fg=2
+10: 1-4 fg=8; 5-9 fg=3
+11: 1-9 fg=2; 10-29 dim
+12: 1-4 fg=8; 5-9 fg=3
+13: 1-4 fg=8; 5-9 fg=2
+25: 0-7 fg=15 bg=4 bold; 20-33 fg=8

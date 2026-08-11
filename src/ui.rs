@@ -262,11 +262,15 @@ fn render_filter_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status(frame: &mut Frame, app: &App, area: Rect) {
-    let mode = match app.mode {
-        Mode::Normal => "NORMAL",
-        Mode::Filter { .. } => "FILTER",
-        Mode::ConfirmDelete => "CONFIRM",
-        Mode::Help => "HELP",
+    let mode = if app.shutting_down {
+        "SAVING"
+    } else {
+        match app.mode {
+            Mode::Normal => "NORMAL",
+            Mode::Filter { .. } => "FILTER",
+            Mode::ConfirmDelete => "CONFIRM",
+            Mode::Help => "HELP",
+        }
     };
 
     let position = match app.tab {

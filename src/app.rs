@@ -96,6 +96,8 @@ pub enum Quit {
     Normal,
     /// Interrupted via Ctrl-C.
     Interrupted,
+    /// SIGTERM: shut down gracefully, then exit 143.
+    Terminated,
 }
 
 pub struct App {
@@ -112,6 +114,9 @@ pub struct App {
     /// keys can move by a real page.
     pub page_size: usize,
     pub quit: Option<Quit>,
+    /// Set while the app is winding down after SIGTERM, so the last frame
+    /// can say so before the process leaves.
+    pub shutting_down: bool,
 }
 
 impl Default for App {
@@ -211,6 +216,7 @@ impl App {
             log_offset: 0,
             page_size: 10,
             quit: None,
+            shutting_down: false,
         }
     }
 
@@ -402,12 +408,21 @@ impl App {
         self.selected = self.selected.min(len.saturating_sub(1));
     }
 
-    /// Select the task on a given row of the list pane. Only reachable by
-    /// clicking — see `docs/TERMLENS-COVERAGE.md` on why that makes this
-    /// path awkward to test through the typed `Key` API.
+    /// Select the task on a given row of the list pane — the click target.
     pub fn select_row(&mut self, row: usize) {
         if self.tab == Tab::Tasks && row < self.visible().len() {
             self.selected = row;
         }
+    }
+
+    /// Move the cursor by a wheel notch.
+    pub fn scroll_by(&mut self, delta: isize) {
+        self.move_by(delta);
+    }
+
+    /// Drop any applied filter — the right-click action.
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.clamp_selection();
     }
 }

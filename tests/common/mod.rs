@@ -11,7 +11,7 @@ use termlens::{Screen, Terminal};
 pub const COLS: u16 = 90;
 pub const ROWS: u16 = 26;
 
-/// Spawn taskboard at a given size and wait for its first painted frame.
+/// Spawn taskboard at a given size and wait for its first complete frame.
 pub fn spawn_sized(cols: u16, rows: u16) -> Terminal {
     let mut t = Terminal::builder()
         .size(cols, rows)
@@ -21,24 +21,13 @@ pub fn spawn_sized(cols: u16, rows: u16) -> Terminal {
         .timeout(Duration::from_secs(10))
         .spawn(env!("CARGO_BIN_EXE_taskboard"))
         .expect("spawn taskboard");
-    // Wait on painted content, never on a bare delay. Note this waits for
-    // "q quit" — the *rightmost text of the bottom row*, i.e. the last thing
-    // the first frame paints. Waiting on "NORMAL" instead is a real race:
-    // frames are not atomic and even a single row arrives in pieces, so the
-    // mode indicator lands while the rest of the status line is still in
-    // flight. See docs/TERMLENS-COVERAGE.md §2.
-    t.wait_until(|s| s.contains("q quit")).expect("first frame");
+    // taskboard brackets every repaint in a DEC 2026 synchronized update, so
+    // `wait_frame` only ever sees complete frames. Under 0.1 this predicate
+    // was a race — "NORMAL" could land while the rest of its row was still
+    // in flight — and the helper had to wait on the last text of the last
+    // row instead. That discipline is no longer needed.
+    t.wait_frame(|s| s.contains("NORMAL")).expect("first frame");
     t
-}
-
-/// Let output stop before snapshotting a whole screen.
-///
-/// A heuristic, and the honest one: there is no frame-boundary signal, so
-/// "nothing has arrived for a moment" is the best available evidence that a
-/// repaint finished. Only needed when asserting on a *whole* screen; a
-/// targeted `wait_until` predicate is exact and always preferred.
-pub fn settle(t: &mut Terminal) {
-    t.wait_idle(Duration::from_millis(100)).expect("settle");
 }
 
 /// Spawn at the standard test size.
@@ -56,21 +45,6 @@ pub fn spawn_sh(script: &str, timeout: Duration) -> Terminal {
         .args(["-c", script])
         .spawn("/bin/sh")
         .expect("spawn /bin/sh")
-}
-
-/// Text of one row restricted to a column range — lets a test look at a
-/// single pane instead of the whole row.
-pub fn pane_text(screen: &Screen, row: u16, cols: std::ops::Range<u16>) -> String {
-    cols.filter_map(|c| screen.cell(row, c))
-        .filter(|cell| !cell.is_wide_continuation())
-        .map(|cell| {
-            if cell.contents().is_empty() {
-                " ".to_string()
-            } else {
-                cell.contents().to_string()
-            }
-        })
-        .collect()
 }
 
 /// The style of the first cell of `needle`. Panics if the text isn't on

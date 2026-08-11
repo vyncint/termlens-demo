@@ -202,7 +202,7 @@ dependencies = [
  "mio",
  "parking_lot",
  "rustix",
- "signal-hook",
+ "signal-hook 0.3.18",
  "signal-hook-mio",
  "winapi",
 ]
@@ -1286,6 +1286,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
 name = "signal-hook-mio"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1293,7 +1303,7 @@ checksum = "b75a19a7a740b25bc7944bdee6172368f988763b744e3d4dfe753f6b4ece40cc"
 dependencies = [
  "libc",
  "mio",
- "signal-hook",
+ "signal-hook 0.3.18",
 ]
 
 [[package]]
@@ -1418,7 +1428,7 @@ dependencies = [
  "bitflags 2.13.1",
  "parking_lot",
  "rustix",
- "signal-hook",
+ "signal-hook 0.3.18",
  "windows-sys",
 ]
 
@@ -1445,11 +1455,12 @@ dependencies = [
 
 [[package]]
 name = "termlens"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e70f68c40c4de916a32d4e18010d908b898c9445d58c21939c27012e94378bd"
+checksum = "02bbfd1bae2751fc5418e64b8392394dc945f18313cb233a31904b647c291ed5"
 dependencies = [
  "insta",
+ "libc",
  "portable-pty",
  "thiserror 2.0.20",
  "vt100",
@@ -1461,6 +1472,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "ratatui",
+ "signal-hook 0.4.4",
  "termlens",
 ]
 
@@ -1490,7 +1502,7 @@ dependencies = [
  "pest_derive",
  "phf",
  "sha2",
- "signal-hook",
+ "signal-hook 0.3.18",
  "siphasher",
  "terminfo",
  "termios",
