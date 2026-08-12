@@ -20,8 +20,8 @@ fn boots_into_the_tasks_tab_with_the_first_row_selected() {
     let t = spawn();
     let screen = t.screen();
 
-    assert!(screen.contains("tasks (10)"), "{screen}");
-    assert!(screen.contains("Tasks 1/10"), "{screen}");
+    assert!(screen.contains("tasks (13)"), "{screen}");
+    assert!(screen.contains("Tasks 1/13"), "{screen}");
     assert!(screen.contains("Wire up the PTY reader"), "{screen}");
 }
 
@@ -30,19 +30,19 @@ fn arrow_and_vim_keys_move_the_selection() -> termlens::Result<()> {
     let mut t = spawn();
 
     t.send(Key::Down);
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
 
     t.send(Key::Char('j'));
     // A complete frame means the detail pane is already consistent with the
     // status bar — no second wait, no combined predicate.
-    t.wait_frame(|s| s.contains("Tasks 3/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 3/13"))?;
     assert!(t.screen().contains("priority med"), "{}", t.screen());
 
     t.send(Key::Char('k'));
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
 
     t.send(Key::Up);
-    t.wait_frame(|s| s.contains("Tasks 1/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 1/13"))?;
     Ok(())
 }
 
@@ -52,15 +52,15 @@ fn selection_clamps_at_both_ends() -> termlens::Result<()> {
 
     t.send(Key::Up);
     t.send(Key::Up);
-    t.wait_frame(|s| s.contains("Tasks 1/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 1/13"))?;
 
     t.send(Key::End);
-    t.wait_frame(|s| s.contains("Tasks 10/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 13/13"))?;
     t.send(Key::Down);
-    t.wait_frame(|s| s.contains("Tasks 10/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 13/13"))?;
 
     t.send(Key::Home);
-    t.wait_frame(|s| s.contains("Tasks 1/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 1/13"))?;
     Ok(())
 }
 
@@ -68,6 +68,7 @@ fn selection_clamps_at_both_ends() -> termlens::Result<()> {
 fn page_keys_move_by_a_screenful() -> termlens::Result<()> {
     let mut t = spawn();
 
+    t.send(Key::Tab);
     t.send(Key::Tab);
     t.send(Key::Tab);
     t.wait_frame(|s| s.contains("logs (40)"))?;
@@ -85,13 +86,16 @@ fn tab_and_backtab_cycle_the_tabs() -> termlens::Result<()> {
     let mut t = spawn();
 
     t.send(Key::Tab);
-    t.wait_frame(|s| s.contains("total    10"))?;
+    t.wait_frame(|s| s.contains("todo ("))?;
+
+    t.send(Key::Tab);
+    t.wait_frame(|s| s.contains("total    13"))?;
 
     t.send(Key::Tab);
     t.wait_frame(|s| s.contains("logs (40)"))?;
 
     t.send(Key::Tab);
-    t.wait_frame(|s| s.contains("tasks (10)"))?;
+    t.wait_frame(|s| s.contains("tasks (13)"))?;
 
     t.send(Key::BackTab);
     t.wait_frame(|s| s.contains("logs (40)"))?;
@@ -105,10 +109,10 @@ fn ctrl_arrow_chords_switch_tabs() -> termlens::Result<()> {
     let mut t = spawn();
 
     t.send(Key::Right.ctrl());
-    t.wait_frame(|s| s.contains("total    10"))?;
+    t.wait_frame(|s| s.contains("todo ("))?;
 
     t.send(Key::Left.ctrl());
-    t.wait_frame(|s| s.contains("tasks (10)"))?;
+    t.wait_frame(|s| s.contains("tasks (13)"))?;
     Ok(())
 }
 
@@ -152,7 +156,7 @@ fn backspace_edits_the_draft_before_it_is_applied() -> termlens::Result<()> {
     t.send(Key::Backspace);
     t.send(Key::Backspace);
     t.wait_frame(|s| s.contains("/do") && !s.contains("/docs"))?;
-    assert!(t.screen().contains("tasks (10)"), "draft is not applied yet");
+    assert!(t.screen().contains("tasks (13)"), "draft is not applied yet");
 
     // "do" matches the `docs` tag and the title "Windows ConPTY support".
     t.send(Key::Enter);
@@ -188,7 +192,7 @@ fn filter_matches_tags_as_well_as_titles() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("FILTER"))?;
     t.paste("i18n");
     t.send(Key::Enter);
-    t.wait_frame(|s| s.contains("tasks (2) filtered"))?;
+    t.wait_frame(|s| s.contains("tasks (3) filtered"))?;
 
     let screen = t.screen();
     assert!(screen.contains("帳票をレンダリングする"), "{screen}");
@@ -209,7 +213,7 @@ fn esc_abandons_the_filter_draft() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("NORMAL"))?;
 
     let screen = t.screen();
-    assert!(screen.contains("tasks (10)"), "{screen}");
+    assert!(screen.contains("tasks (13)"), "{screen}");
     assert!(!screen.contains("filter:"), "{screen}");
     Ok(())
 }
@@ -227,7 +231,7 @@ fn esc_in_normal_mode_clears_an_applied_filter() -> termlens::Result<()> {
     t.send(Key::Esc);
     // In 0.1 this was the flakiest test in the suite: waiting on the list
     // and then reading the status bar caught the frame half-painted.
-    t.wait_frame(|s| s.contains("tasks (10)"))?;
+    t.wait_frame(|s| s.contains("tasks (13)"))?;
     assert!(!t.screen().contains("filter:"), "{}", t.screen());
     Ok(())
 }
@@ -245,10 +249,16 @@ fn confirm_dialog_deletes_the_selected_task() -> termlens::Result<()> {
     assert!(screen.contains("[y] delete   [n] cancel"), "{screen}");
 
     t.send(Key::Char('y'));
-    t.wait_frame(|s| s.contains("tasks (9)"))?;
+    t.wait_frame(|s| s.contains("tasks (12)"))?;
 
     let screen = t.screen();
-    assert!(!screen.contains("Wire up the PTY reader"), "{screen}");
+    // The title lives on in the status bar's toast, so scope the "it's
+    // gone" assertion to the list pane rather than the whole screen.
+    assert!(
+        !screen.rect_text(0..40, 4..24).contains("Wire up the PTY reader"),
+        "{screen}"
+    );
+    assert!(screen.contains("· deleted Wire up the PTY reader"), "{screen}");
     assert!(screen.contains("NORMAL"), "{screen}");
     Ok(())
 }
@@ -264,7 +274,7 @@ fn confirm_dialog_cancels_without_deleting() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("NORMAL"))?;
 
     let screen = t.screen();
-    assert!(screen.contains("tasks (10)"), "{screen}");
+    assert!(screen.contains("tasks (13)"), "{screen}");
     assert!(screen.contains("Wire up the PTY reader"), "{screen}");
     assert!(!screen.contains("delete this task?"), "{screen}");
     Ok(())
@@ -317,7 +327,7 @@ fn clicking_a_row_selects_it() -> termlens::Result<()> {
 
     // Screen row 6 is the third list entry (3 tab rows + 1 border).
     t.click(10, 6)?;
-    t.wait_frame(|s| s.contains("Tasks 3/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 3/13"))?;
     assert!(t.screen().contains("priority med"), "{}", t.screen());
     Ok(())
 }
@@ -327,13 +337,13 @@ fn the_wheel_moves_the_selection() -> termlens::Result<()> {
     let mut t = spawn();
 
     t.scroll(10, 6, Scroll::Down)?;
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
 
     t.scroll(10, 6, Scroll::Down)?;
-    t.wait_frame(|s| s.contains("Tasks 3/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 3/13"))?;
 
     t.scroll(10, 6, Scroll::Up)?;
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
     Ok(())
 }
 
@@ -356,7 +366,7 @@ fn terminal_state_around_the_grid_is_readable() -> termlens::Result<()> {
     let mut t = spawn();
     let screen = t.screen();
 
-    assert_eq!(screen.title(), "taskboard", "OSC 0 window title");
+    assert_eq!(screen.title(), "taskboard — 10 open", "OSC 2 window title");
     assert!(screen.alternate_screen(), "TUI should be on the alt screen");
     assert!(screen.bracketed_paste(), "mode 2004");
     assert_eq!(screen.mouse_mode(), MouseMode::AnyMotion);
@@ -379,7 +389,7 @@ fn the_selected_row_is_drawn_in_reverse_video() -> termlens::Result<()> {
     let screen = t.screen();
     let selected = style_at(&screen, "[x] HIGH Wire up");
     assert!(selected.reverse && selected.bold);
-    assert!(!style_at(&screen, "[ ] HIGH Handle SIGWINCH").reverse);
+    assert!(!style_at(&screen, "[ ] HIGH ! Handle SIGWINCH").reverse);
 
     // `find_by` locates the highlight directly instead of guessing which
     // text carries it — new in 0.2.
@@ -387,7 +397,7 @@ fn the_selected_row_is_drawn_in_reverse_video() -> termlens::Result<()> {
     assert_eq!(first_reverse, Some((4, 1)), "highlight on the first row");
 
     t.send(Key::Down);
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
     assert_eq!(t.screen().find_by(|c| c.style().reverse), Some((5, 1)));
     Ok(())
 }
@@ -397,7 +407,7 @@ fn priority_and_status_are_colour_coded() {
     let t = spawn();
     let screen = t.screen();
 
-    let high = style_at(&screen, "HIGH Handle SIGWINCH");
+    let high = style_at(&screen, "HIGH ! Handle SIGWINCH");
     assert_eq!(high.fg, Color::Indexed(1), "HIGH should be red");
     assert!(high.bold);
 
@@ -523,10 +533,10 @@ fn the_app_is_usable_at_an_awkward_size() -> termlens::Result<()> {
 
     let screen = t.screen();
     assert_eq!(screen.size(), (40, 12));
-    assert!(screen.contains("tasks (10)"), "{screen}");
+    assert!(screen.contains("tasks (13)"), "{screen}");
 
     t.send(Key::End);
-    t.wait_frame(|s| s.contains("Tasks 10/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 13/13"))?;
     Ok(())
 }
 

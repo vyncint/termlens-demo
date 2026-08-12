@@ -2,6 +2,13 @@
 //!
 //! Kept free of rendering so the state machine can be reasoned about (and
 //! unit-tested) on its own; `ui` turns a `&App` into frames.
+//!
+//! Several features here exist because they are *hard to observe from a
+//! test harness*, not because a task manager needs them: a clipboard yank
+//! (OSC 52), a hyperlinked reference (OSC 8), a bell on rejected input, a
+//! palette override (OSC 4), and a progress run that completes many frames
+//! inside one write burst. `tests/hard.rs` records which of them termlens
+//! can actually reach.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -9,16 +16,18 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Tasks,
+    Board,
     Stats,
     Logs,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Tasks, Tab::Stats, Tab::Logs];
+    pub const ALL: [Tab; 4] = [Tab::Tasks, Tab::Board, Tab::Stats, Tab::Logs];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Tasks => "Tasks",
+            Tab::Board => "Board",
             Tab::Stats => "Stats",
             Tab::Logs => "Logs",
         }
@@ -49,6 +58,9 @@ pub enum Mode {
     ConfirmDelete,
     /// Help overlay.
     Help,
+    /// A task is "running": the event loop paints one complete frame per
+    /// percentage step, all inside a single burst of output.
+    Running { pct: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +80,40 @@ impl Priority {
     }
 }
 
+/// Which board column a task sits in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    Todo,
+    Doing,
+    Done,
+}
+
+impl Lane {
+    pub const ALL: [Lane; 3] = [Lane::Todo, Lane::Doing, Lane::Done];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Lane::Todo => "todo",
+            Lane::Doing => "doing",
+            Lane::Done => "done",
+        }
+    }
+}
+
+/// A side effect the renderer cannot express, emitted as a raw escape
+/// sequence by `main` after the frame is drawn but before it is published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// `BEL` — rejected input.
+    Bell,
+    /// `OSC 52` — write the string to the system clipboard.
+    Copy(String),
+    /// `OSC 0/2` — retitle the window.
+    Title(String),
+    /// `OSC 4` — redefine palette slots (true = high contrast, false = reset).
+    Palette(bool),
+}
+
 #[derive(Debug, Clone)]
 pub struct Task {
     pub title: String,
@@ -75,6 +121,16 @@ pub struct Task {
     pub priority: Priority,
     pub tags: Vec<String>,
     pub notes: String,
+    /// Rendered as an `OSC 8` hyperlink: the label is on the grid, the
+    /// target is not.
+    pub url: Option<String>,
+    /// Rendered with `SGR 8` (conceal). A real terminal hides it; the
+    /// characters are still in the grid.
+    pub secret: Option<String>,
+    /// Draws a badge with `SGR 5` (blink).
+    pub overdue: bool,
+    /// In the `Doing` lane on the board.
+    pub started: bool,
 }
 
 impl Task {
@@ -85,6 +141,40 @@ impl Task {
             priority,
             tags: tags.iter().map(|t| t.to_string()).collect(),
             notes: notes.to_string(),
+            url: None,
+            secret: None,
+            overdue: false,
+            started: false,
+        }
+    }
+
+    fn url(mut self, url: &str) -> Self {
+        self.url = Some(url.to_string());
+        self
+    }
+
+    fn secret(mut self, secret: &str) -> Self {
+        self.secret = Some(secret.to_string());
+        self
+    }
+
+    fn overdue(mut self) -> Self {
+        self.overdue = true;
+        self
+    }
+
+    fn started(mut self) -> Self {
+        self.started = true;
+        self
+    }
+
+    pub fn lane(&self) -> Lane {
+        if self.done {
+            Lane::Done
+        } else if self.started {
+            Lane::Doing
+        } else {
+            Lane::Todo
         }
     }
 }
@@ -110,6 +200,8 @@ pub struct App {
     pub filter: String,
     pub logs: Vec<String>,
     pub log_offset: usize,
+    /// Which board column has the cursor.
+    pub lane: usize,
     /// How many rows the list pane last had — set by the renderer so paging
     /// keys can move by a real page.
     pub page_size: usize,
@@ -117,6 +209,20 @@ pub struct App {
     /// Set while the app is winding down after SIGTERM, so the last frame
     /// can say so before the process leaves.
     pub shutting_down: bool,
+    /// A transient notice, shown on exactly one frame and then cleared —
+    /// the state a harness can only catch if it retains completed frames.
+    pub toast: Option<String>,
+    /// False while the terminal reports the window is unfocused (mode 1004).
+    pub focused: bool,
+    /// High-contrast palette applied via `OSC 4`.
+    pub high_contrast: bool,
+    /// Whatever was last yanked, so the UI can say so.
+    pub clipboard: Option<String>,
+    /// Escape sequences for `main` to emit with the next frame.
+    pub effects: Vec<Effect>,
+    /// Set by the renderer: where the hyperlink label landed, and its
+    /// target, so `main` can re-emit it wrapped in `OSC 8`.
+    pub link_hint: Option<(u16, u16, String, String)>,
 }
 
 impl Default for App {
@@ -127,8 +233,11 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
-        // Deliberately includes CJK and emoji: double-width cells are where
-        // column arithmetic goes wrong, so the fixture data exercises them.
+        // Deliberately includes CJK, a ZWJ emoji sequence, a regional-
+        // indicator flag, a VS16 emoji, decomposed (NFD) text and a title
+        // with trailing whitespace: every one of them is a place where a
+        // harness's column arithmetic or its text comparison can disagree
+        // with what a real terminal shows.
         let tasks = vec![
             Task::new(
                 "Wire up the PTY reader",
@@ -136,7 +245,8 @@ impl App {
                 Priority::High,
                 &["core", "io"],
                 "Drain continuously so the kernel buffer never stalls the child.",
-            ),
+            )
+            .url("https://example.invalid/rfc/pty-reader"),
             Task::new(
                 "Snapshot the screen grid",
                 true,
@@ -150,14 +260,16 @@ impl App {
                 Priority::Medium,
                 &["i18n"],
                 "Wide glyphs must occupy two columns and one continuation cell.",
-            ),
+            )
+            .started(),
             Task::new(
                 "Handle SIGWINCH",
                 false,
                 Priority::High,
                 &["core", "layout"],
                 "Resize the PTY and the emulated grid together.",
-            ),
+            )
+            .overdue(),
             Task::new(
                 "Add bracketed paste",
                 false,
@@ -192,13 +304,44 @@ impl App {
                 Priority::Medium,
                 &["docs", "core"],
                 "Render per-cell attributes into the snapshot text.",
-            ),
+            )
+            .started(),
             Task::new(
                 "Windows ConPTY support",
                 false,
                 Priority::Low,
                 &["portability"],
                 "portable-pty already speaks ConPTY; the harness does not.",
+            ),
+            // NFD: 'e' + U+0301, not the precomposed U+00E9. A test that
+            // greps for "café" as typed in its own source will miss this.
+            Task::new(
+                "Rotate the cafe\u{301} credentials",
+                false,
+                Priority::High,
+                &["ops", "secret"],
+                "Decomposed text renders identically and compares differently.",
+            )
+            .secret("hunter2-rotate-me")
+            .overdue(),
+            // A ZWJ sequence, a regional-indicator flag, and a VS16 emoji:
+            // three different ways a terminal's idea of "one glyph, N
+            // columns" can diverge from an emulator's.
+            Task::new(
+                "Audit 👨‍👩‍👧 🇻🇳 ❤️ glyph widths",
+                false,
+                Priority::Medium,
+                &["i18n"],
+                "ZWJ sequences, flags and variation selectors each count differently.",
+            ),
+            // Trailing whitespace survives in the grid but not in a
+            // trailing-whitespace-stripped rendering of it.
+            Task::new(
+                "Trim trailing space   ",
+                false,
+                Priority::Low,
+                &["ui"],
+                "The three spaces after the title are real cells.",
             ),
         ];
 
@@ -214,9 +357,16 @@ impl App {
             filter: String::new(),
             logs,
             log_offset: 0,
+            lane: 0,
             page_size: 10,
             quit: None,
             shutting_down: false,
+            toast: None,
+            focused: true,
+            high_contrast: false,
+            clipboard: None,
+            effects: Vec::new(),
+            link_hint: None,
         }
     }
 
@@ -246,12 +396,40 @@ impl App {
         self.tasks.iter().filter(|t| t.done).count()
     }
 
+    pub fn open_count(&self) -> usize {
+        self.tasks.len() - self.done_count()
+    }
+
     pub fn count_by(&self, priority: Priority) -> usize {
         self.tasks.iter().filter(|t| t.priority == priority).count()
     }
 
+    /// Indices of the tasks in one board lane.
+    pub fn lane_tasks(&self, lane: Lane) -> Vec<usize> {
+        self.visible()
+            .into_iter()
+            .filter(|&i| self.tasks[i].lane() == lane)
+            .collect()
+    }
+
+    /// The window title, which tracks state rather than being set once.
+    pub fn window_title(&self) -> String {
+        format!("taskboard — {} open", self.open_count())
+    }
+
+    fn notify(&mut self, message: impl Into<String>) {
+        self.toast = Some(message.into());
+    }
+
+    fn reject(&mut self) {
+        self.effects.push(Effect::Bell);
+    }
+
     /// Feed one key press through the state machine.
     pub fn on_key(&mut self, key: KeyEvent) {
+        // A new key means the previous frame's transient notice is spent.
+        self.toast = None;
+
         // Ctrl-C always wins, in every mode.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = Some(Quit::Interrupted);
@@ -262,6 +440,8 @@ impl App {
             Mode::Filter { .. } => self.on_key_filter(key),
             Mode::ConfirmDelete => self.on_key_confirm(key),
             Mode::Help => self.on_key_help(key),
+            // A run is not interactive; any key is ignored until it ends.
+            Mode::Running { .. } => {}
             Mode::Normal => self.on_key_normal(key),
         }
     }
@@ -273,7 +453,10 @@ impl App {
         match key.code {
             KeyCode::Char(c) => draft.push(c),
             KeyCode::Backspace => {
-                draft.pop();
+                if draft.pop().is_none() {
+                    // Nothing left to erase: say so audibly.
+                    self.reject();
+                }
             }
             KeyCode::Enter => {
                 self.filter = draft.clone();
@@ -290,13 +473,18 @@ impl App {
             KeyCode::Char('y') | KeyCode::Enter => {
                 let visible = self.visible();
                 if let Some(&idx) = visible.get(self.selected) {
+                    let title = self.tasks[idx].title.clone();
                     self.tasks.remove(idx);
+                    self.notify(format!("deleted {title}"));
+                    self.retitle();
                 }
                 self.mode = Mode::Normal;
                 self.clamp_selection();
             }
             KeyCode::Char('n') | KeyCode::Esc => self.mode = Mode::Normal,
-            _ => {}
+            // A modal that ignores a key silently is indistinguishable from
+            // one that hung — ring instead.
+            _ => self.reject(),
         }
     }
 
@@ -310,11 +498,16 @@ impl App {
     }
 
     /// Text arriving as one bracketed-paste burst rather than as key presses.
-    /// Newlines are stripped: a paste is a value, not a submit.
+    /// Control characters are stripped: a paste is a value, not a submit.
     pub fn on_paste(&mut self, text: &str) {
         if let Mode::Filter { draft } = &mut self.mode {
             draft.extend(text.chars().filter(|c| !c.is_control()));
         }
+    }
+
+    /// The terminal reported a focus change (mode 1004).
+    pub fn on_focus(&mut self, focused: bool) {
+        self.focused = focused;
     }
 
     fn on_key_normal(&mut self, key: KeyEvent) {
@@ -335,10 +528,20 @@ impl App {
             KeyCode::Home => self.move_to_start(),
             KeyCode::End => self.move_to_end(),
 
+            // Board lane movement.
+            KeyCode::Char('h') | KeyCode::Left if self.tab == Tab::Board => {
+                self.lane = self.lane.saturating_sub(1);
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.tab == Tab::Board => {
+                self.lane = (self.lane + 1).min(Lane::ALL.len() - 1);
+            }
+
             KeyCode::Char(' ') if self.tab == Tab::Tasks => self.toggle_done(),
             KeyCode::Char('d') if self.tab == Tab::Tasks => {
                 if self.selected_task().is_some() {
                     self.mode = Mode::ConfirmDelete;
+                } else {
+                    self.reject();
                 }
             }
             KeyCode::Char('/') if self.tab == Tab::Tasks => {
@@ -346,12 +549,63 @@ impl App {
                     draft: self.filter.clone(),
                 };
             }
+            // Yank the selected title to the system clipboard (OSC 52).
+            KeyCode::Char('y') => match self.selected_task() {
+                Some(task) => {
+                    let title = task.title.clone();
+                    self.clipboard = Some(title.clone());
+                    self.effects.push(Effect::Copy(title.clone()));
+                    self.notify(format!("copied {title}"));
+                }
+                None => self.reject(),
+            },
+            // Run the selected task: many complete frames, one burst.
+            KeyCode::Char('r') if self.tab == Tab::Tasks => {
+                if self.selected_task().is_some() {
+                    self.mode = Mode::Running { pct: 0 };
+                } else {
+                    self.reject();
+                }
+            }
+            // Redefine palette slots 1-6 (OSC 4).
+            KeyCode::Char('T') => {
+                self.high_contrast = !self.high_contrast;
+                self.effects.push(Effect::Palette(self.high_contrast));
+                let state = if self.high_contrast { "on" } else { "off" };
+                self.notify(format!("high contrast {state}"));
+            }
             KeyCode::Esc if self.tab == Tab::Tasks && !self.filter.is_empty() => {
                 self.filter.clear();
                 self.clamp_selection();
             }
             _ => {}
         }
+    }
+
+    /// Advance a run by one step. Returns false once the run is over.
+    pub fn step_run(&mut self) -> bool {
+        let Mode::Running { pct } = self.mode else {
+            return false;
+        };
+        if pct >= 100 {
+            let visible = self.visible();
+            if let Some(&idx) = visible.get(self.selected) {
+                self.tasks[idx].done = true;
+                self.tasks[idx].started = false;
+                let title = self.tasks[idx].title.clone();
+                self.notify(format!("finished {title}"));
+            }
+            self.mode = Mode::Normal;
+            self.retitle();
+            return false;
+        }
+        self.mode = Mode::Running { pct: pct + 10 };
+        true
+    }
+
+    fn retitle(&mut self) {
+        let title = self.window_title();
+        self.effects.push(Effect::Title(title));
     }
 
     /// Move the cursor within whichever list the current tab shows.
@@ -377,6 +631,7 @@ impl App {
     fn list_len(&self) -> usize {
         match self.tab {
             Tab::Tasks => self.visible().len(),
+            Tab::Board => self.lane_tasks(Lane::ALL[self.lane]).len(),
             Tab::Logs => self.logs.len(),
             Tab::Stats => 0,
         }
@@ -400,6 +655,10 @@ impl App {
         let visible = self.visible();
         if let Some(&idx) = visible.get(self.selected) {
             self.tasks[idx].done = !self.tasks[idx].done;
+            if self.tasks[idx].done {
+                self.tasks[idx].started = false;
+            }
+            self.retitle();
         }
     }
 

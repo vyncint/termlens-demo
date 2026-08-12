@@ -4,21 +4,21 @@ expression: t.screen()
 ---
 size: 90x26  cursor: hidden
 ┌ taskboard ─────────────────────────────────────────────────────────────────────────────┐
-│ Tasks │ Stats │ Logs                                                                   │
+│ Tasks │ Board │ Stats │ Logs                                                           │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ tasks (4) filtered ───────────────────┐┌ detail ───────────────────────────────────────┐
 │[x] HIGH Wire up the PTY reader        ││title    Wire up the PTY reader                │
 │[x] HIGH Snapshot the screen grid      ││status   done                                  │
-│[ ] HIGH Handle SIGWINCH               ││priority HIGH                                  │
-│[ ] med  Ship v0.2 styles block        ││tags     core, io                              │
+│[ ] HIGH ! Handle SIGWINCH             ││priority HIGH                                  │
+│[~] med  Ship v0.2 styles block        ││tags     core, io                              │
+│                                       ││link     open ref                              │
 │                                       ││                                               │
-│                                       ││Drain continuously so the kernel buffer never  │
-│                      ┌ confirm ─────────────────────────────────┐                      │
+│                      ┌ confirm ─────────────────────────────────┐ kernel buffer never  │
 │                      │delete this task?                         │                      │
 │                      │Wire up the PTY reader                    │                      │
 │                      │                                          │                      │
 │                      │[y] delete   [n] cancel                   │                      │
-│                      └──────────────────────────────────────────┘                      │
+│                   🇳  └──────────────────────────────────────────┘                      │
 │                                       ││                                               │
 │                                       ││                                               │
 │                                       ││                                               │

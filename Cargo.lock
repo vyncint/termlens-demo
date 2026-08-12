@@ -1455,9 +1455,9 @@ dependencies = [
 
 [[package]]
 name = "termlens"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02bbfd1bae2751fc5418e64b8392394dc945f18313cb233a31904b647c291ed5"
+checksum = "5cf64e4d477cfb982ec72cdc8a28d0184f591915cc95a5917d7cfd68becd8edc"
 dependencies = [
  "insta",
  "libc",
@@ -1471,6 +1471,7 @@ name = "termlens-demo"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "libc",
  "ratatui",
  "signal-hook 0.4.4",
  "termlens",

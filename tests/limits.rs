@@ -127,12 +127,12 @@ fn right_click_and_drag_still_need_hand_rolled_bytes() -> termlens::Result<()> {
     // There is no `t.click_with(Button::Right, …)`. SGR button 2 = right.
     t.send_str("\x1b[<2;11;7M");
     t.send_str("\x1b[<2;11;7m");
-    t.wait_frame(|s| s.contains("tasks (10)") && !s.contains("filter:"))?;
+    t.wait_frame(|s| s.contains("tasks (13)") && !s.contains("filter:"))?;
 
     // And the wheel cannot go sideways: `Scroll` is a two-variant enum, so
     // horizontal scroll (SGR buttons 66/67) is unreachable too.
     t.scroll(10, 6, Scroll::Down)?;
-    t.wait_frame(|s| s.contains("Tasks 2/10"))?;
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
     Ok(())
 }
 

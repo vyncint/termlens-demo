@@ -248,3 +248,179 @@ If you want a ranking of what to do next, from this study:
 
 Nothing in the remaining list threatens correctness or produces flaky tests.
 That was not true of 0.1.
+
+---
+
+# termlens 0.2.1 — a deeper pass, and a harder subject
+
+Everything above was written against 0.2.0 with a subject that stayed
+inside what a screen grid can express. This section is the result of two
+things: upgrading to **0.2.1**, and rebuilding `taskboard` so it
+deliberately does the things a screen-grid harness struggles with.
+
+**135 tests, all passing, 5/5 clean stress runs.** `tests/tui.rs` (40) is
+the coverage, `tests/limits.rs` (9) pins the 0.2 gaps, `tests/hard.rs` (23)
+drives the hard cases against the application, and `tests/survey.rs` (45)
+plus `tests/survey_0_2_1.rs` (18) isolate each finding against plain
+`/bin/sh`. As before, nothing here is inferred from reading the crate.
+
+## 3. What 0.2.1 changed
+
+| change | effect |
+|---|---|
+| `paste` rewrites line breaks to `\r`, collapses `\r\n` | closes the one fidelity gap the 0.2.0 pass found in paste |
+| `paste` strips embedded `ESC[200~`/`ESC[201~` to a fixed point | paste injection can no longer end the paste early |
+| UTF-8 mouse encoding (mode 1005) | `click` emits `c2 85` where the legacy form emits a bare `85` |
+| builder validation | zero dimensions, empty program name and a missing `current_dir` are typed errors instead of a wedged terminal |
+| a dedicated responder thread | a query reply can no longer block the drain and deadlock the harness |
+| richer query diagnostics | several unanswered queries named at once, an overflow count past eight, a note on `Eof` errors too, and a causation heuristic |
+| bounded `Drop` reap | a wedged child can no longer hang the test binary forever |
+
+The causation heuristic is the nicest of these. A query the application
+asked and then moved past now reads *"…and received no answer, but produced
+output afterwards, so that is probably not why this wait failed"*, instead
+of being presented as the cause.
+
+`src/screen.rs`, `src/emu/seq.rs`, `src/error.rs` and `src/wait.rs` are
+byte-identical to 0.2.0, so every §2 gap that lives in those files survives.
+
+## 4. New in 0.2.1
+
+### 4.1 The UTF-8 mouse encoding cannot reach the coordinates it exists for
+`mouse_report` checks `col > 222 || row > 222` *before* it consults the
+encoding, so with mode 1005 active a click at column 300 is refused — and
+the message names the wrong scheme:
+
+> `(300, 5) is unrepresentable in the legacy mouse encoding the application selected (max 222)`
+
+Mode 1005 exists precisely to carry coordinates past that limit (xterm
+reaches ~2015), and 0.2.1 implements the encoding correctly. Only the guard
+stands in the way. (`survey_0_2_1::v8`; `v7` shows the encoding itself
+works.)
+
+### 4.2 Query replies are dropped past roughly a hundred unread
+The responder queue is 64 deep and drops when full. The premise in the
+source — *"reached only when the application has stopped reading its input
+entirely, in which case it cannot be waiting on these bytes"* — is
+falsified by batch-probe-then-read, a legitimate startup pattern. Measured,
+with the application reading everything after a pause:
+
+| queries asked | replies received |
+|---|---|
+| 50 | 50 |
+| 200 | **94** |
+| 400 | 161 |
+| 600 | 231 |
+| 1000 | 285 |
+
+A real terminal backpressures; termlens discards. The only signal is a note
+that appears *if some later wait fails* — in `v14` the application carried
+on with 395 of 1500 answers and nothing failed, so nothing warned. Ordinary
+applications issuing a handful of probes are unaffected.
+
+### 4.3 Only the lower size bound is guarded
+`check_size` rejects zero at both `spawn` and `resize`, with a clear
+message. Nothing caps the top, and snapshot cost is O(area) with a `String`
+per cell. First `screen()`: 80×24 → 267µs, 500×500 → 34ms, 1500×1500 →
+**331ms**. Since `wait_until` rebuilds a snapshot per state change, a large
+grid quietly reduces a timeout budget to a handful of evaluations.
+(`survey_0_2_1::v2`)
+
+### 4.4 Smaller
+- `paste` is no longer byte-transparent: the newline rewrite applies even
+  when bracketed paste is off, so no `paste` call can deliver a literal LF.
+  `send_str` is the escape hatch. (`v6`)
+- Replies now go out on a duplicated descriptor from the responder thread
+  while `send` writes on the original under a lock; nothing orders the two.
+  Not reproduced — 8/8 runs kept reply-before-keystroke — so this is a note
+  about construction, not a defect. (`v16`)
+- `current_dir` pointing at an existing *file* reports "is not an existing
+  directory". Accurate, mildly confusing. (`v3c`)
+
+## 5. The hard cases, against a real application
+
+`taskboard` now emits, on purpose, what a grid cannot hold: an `OSC 8`
+hyperlink, an `OSC 52` clipboard write, an `OSC 4` palette override,
+`DECSCUSR` cursor shapes, `BEL`, focus events, strikethrough, blink,
+conceal, a burst of complete frames, and — behind `--probe-sync` — a
+`DECRQM` capability probe. `tests/hard.rs` records what survives the trip.
+
+### 5.1 A capability probe turns `wait_frame` off entirely
+The headline. With `--probe-sync` the application does what a careful
+application does: it asks `CSI ? 2026 $ p` whether the terminal supports
+synchronized output, and brackets its repaints only if the answer says yes.
+
+termlens **implements** DEC 2026 — `wait_frame` is built on it — but does
+not **recognise the query that advertises it**: the `$` intermediate sets
+`csi_invalid`, and `csi_final` returns before classification. So the probe
+goes unanswered, the application concludes there is no support, stops
+emitting synchronized updates, and `wait_frame` can never succeed against
+it. The error then blames the application:
+
+> a complete frame — but the application never emitted a DEC 2026
+> synchronized update.
+
+and no note names the query that caused it. The same binary without the
+flag is fully frame-testable. One unrecognised query is the whole
+difference. (`hard::probing_for_synchronized_output_turns_wait_frame_off_entirely`)
+
+Of the six probes a capability-hungry app fires at startup, five are
+answered; XTGETTCAP is the one that is not.
+(`hard::five_of_six_startup_capability_probes_are_answered`)
+
+### 5.2 A burst of frames, from a real event loop
+`r` runs the selected task: the loop paints 0%, 10%, … 100% and a closing
+frame back to back with nothing pacing them. Every one is a complete DEC
+2026 frame; only the last is reachable. §2.1 held against a `printf`
+fixture, and it holds against an application.
+(`hard::only_the_last_frame_of_a_progress_burst_is_observable`)
+
+The transient toast, by contrast, *is* catchable — because it ends the
+burst rather than sitting inside it. That is the same property that makes
+the `SAVING` frame observable on SIGTERM.
+
+### 5.3 What the application does that no test can see
+
+| the application does | the harness sees |
+|---|---|
+| strikes through finished titles (`SGR 9`) | only the dim; a struck-through dim title and a plain dim one are the same value |
+| blinks the overdue badge (`SGR 5`) | a red cell, no blink attribute anywhere |
+| conceals the credentials field (`SGR 8`) | **the secret, in clear** — and no marker that it was concealed |
+| links "open ref" to a URL (`OSC 8`) | the label; the target is nowhere |
+| copies the title to the clipboard (`OSC 52`) | only the app's own toast |
+| rings the bell on a rejected key (`BEL`) | a byte-identical screen |
+| switches the cursor to a bar (`DECSCUSR`) | position and visibility, never shape |
+| redefines palette slots 1-6 (`OSC 4`) | `Color::Indexed(1)`, unchanged, whatever it now paints |
+| dims its chrome when the window loses focus (mode 1004) | the focused branch only — no API delivers a focus event |
+
+The conceal row is the one worth pausing on: a test asserting that a
+password field is masked would pass against an application that prints it
+in clear, and fail against one that masks it properly only if it happened
+to check the styles too — which cannot distinguish them either.
+
+### 5.4 Text fidelity, in an application rather than a fixture
+- The credentials task's title carries a decomposed `é`. `contains("café
+  credentials")` — the needle a test author would type — misses.
+  (`hard::the_nfd_title_does_not_match_an_nfc_needle`)
+- The audit task mixes a ZWJ sequence, a regional-indicator flag and a VS16
+  emoji. The grid's column accounting for all three differs from what a
+  terminal draws, so the rendered row is not the row a user sees.
+- A title ending in three real spaces is indistinguishable from one padded
+  to the same width by the list widget: the identical assertion passes for
+  both. A trailing-whitespace regression inside a padded pane is not
+  assertable at all.
+
+## 6. Ranking, revised
+
+1. **Answer `DECRQM` for 2026** (§5.1) — still the highest leverage in the
+   crate, and now demonstrated end to end against an application. It is the
+   detection path the headline feature depends on.
+2. **Give `wait_frame` a barrier and a return value** — count only frames
+   completed after the call, and return the matched `Screen`. Closes three
+   ways a test can pass while proving nothing.
+3. **Move the 222 guard inside the encoding match** (§4.1) — the smallest
+   fix here, on code that just shipped.
+4. **Backpressure rather than drop** (§4.2) — a discarded answer should not
+   be discoverable only through a note in an unrelated timeout.
+5. **`strikethrough`, `blink`, `conceal` on `Style`** — vt100 already
+   exposes them, and §5.3 shows what their absence costs.

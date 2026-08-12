@@ -35,6 +35,24 @@ pub fn spawn() -> Terminal {
     spawn_sized(COLS, ROWS)
 }
 
+/// Spawn taskboard with command-line arguments and an explicit timeout.
+///
+/// The timeout is a parameter because `wait_frame` and `wait_idle` have no
+/// per-call override (see `docs/TERMLENS-COVERAGE.md` §2.8): a test that
+/// expects one of them to *fail* has to lower the builder value or pay the
+/// full deadline.
+pub fn spawn_args(args: &[&str], timeout: Duration) -> Terminal {
+    let mut t = Terminal::builder()
+        .size(COLS, ROWS)
+        .env_clear()
+        .timeout(timeout)
+        .args(args)
+        .spawn(env!("CARGO_BIN_EXE_taskboard"))
+        .expect("spawn taskboard");
+    t.wait_until(|s| s.contains("NORMAL")).expect("first paint");
+    t
+}
+
 /// Spawn a plain shell script in a PTY — for probing terminal behaviour that
 /// has nothing to do with the TUI.
 pub fn spawn_sh(script: &str, timeout: Duration) -> Terminal {

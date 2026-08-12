@@ -1,24 +1,25 @@
 //! Rendering. Turns `&mut App` into a frame.
 //!
-//! Takes `&mut App` rather than `&App` only so the renderer can report the
-//! real list height back into `app.page_size` — paging keys should move by a
-//! screenful of whatever the terminal currently is.
+//! Takes `&mut App` rather than `&App` so the renderer can report two
+//! things back: the real list height (paging keys should move by a
+//! screenful of whatever the terminal currently is) and where the
+//! hyperlink label landed (`main` re-emits it wrapped in `OSC 8`, which no
+//! cell-based buffer can express).
 
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
-};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, Mode, Priority, Tab};
+use crate::app::{App, Lane, Mode, Priority, Tab};
 
 /// Below this width the detail pane is dropped and the list goes full-width.
 pub const NARROW_WIDTH: u16 = 60;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    app.link_hint = None;
 
     let filter_height = if matches!(app.mode, Mode::Filter { .. }) {
         1
@@ -38,6 +39,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_tabs(frame, app, chunks[0]);
     match app.tab {
         Tab::Tasks => render_tasks(frame, app, chunks[1]),
+        Tab::Board => render_board(frame, app, chunks[1]),
         Tab::Stats => render_stats(frame, app, chunks[1]),
         Tab::Logs => render_logs(frame, app, chunks[1]),
     }
@@ -49,6 +51,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     match app.mode {
         Mode::Help => render_help(frame, area),
         Mode::ConfirmDelete => render_confirm(frame, app, area),
+        Mode::Running { pct } => render_running(frame, app, area, pct),
         _ => {}
     }
 }
@@ -70,6 +73,51 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
+/// The row for one task in the list: status mark, priority, an overdue
+/// badge, and the title.
+///
+/// Two attributes here are chosen because a harness may not model them:
+/// a finished title is struck through (`SGR 9`), and an overdue badge
+/// blinks (`SGR 5`). Both are visible to a person and, as
+/// `tests/hard.rs` records, invisible to termlens.
+fn task_line(app: &App, index: usize) -> Line<'static> {
+    let task = &app.tasks[index];
+    let (mark, mark_style) = if task.done {
+        ("[x] ", Style::default().fg(Color::Green))
+    } else if task.started {
+        ("[~] ", Style::default().fg(Color::Cyan))
+    } else {
+        ("[ ] ", Style::default().fg(Color::DarkGray))
+    };
+    let priority_style = match task.priority {
+        Priority::High => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        Priority::Medium => Style::default().fg(Color::Yellow),
+        Priority::Low => Style::default().fg(Color::Green),
+    };
+    let title_style = if task.done {
+        Style::default()
+            .add_modifier(Modifier::DIM)
+            .add_modifier(Modifier::CROSSED_OUT)
+    } else {
+        Style::default()
+    };
+
+    let mut spans = vec![
+        Span::styled(mark, mark_style),
+        Span::styled(format!("{:<4} ", task.priority.label()), priority_style),
+    ];
+    if task.overdue {
+        spans.push(Span::styled(
+            "! ",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ));
+    }
+    spans.push(Span::styled(task.title.clone(), title_style));
+    Line::from(spans)
+}
+
 fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
     // Responsive: the detail pane is the first thing to go when it's tight.
     let (list_area, detail_area) = if area.width >= NARROW_WIDTH {
@@ -87,29 +135,7 @@ fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
     let visible = app.visible();
     let items: Vec<ListItem> = visible
         .iter()
-        .map(|&i| {
-            let task = &app.tasks[i];
-            let (mark, mark_style) = if task.done {
-                ("[x] ", Style::default().fg(Color::Green))
-            } else {
-                ("[ ] ", Style::default().fg(Color::DarkGray))
-            };
-            let priority_style = match task.priority {
-                Priority::High => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                Priority::Medium => Style::default().fg(Color::Yellow),
-                Priority::Low => Style::default().fg(Color::Green),
-            };
-            let title_style = if task.done {
-                Style::default().add_modifier(Modifier::DIM)
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(mark, mark_style),
-                Span::styled(format!("{:<4} ", task.priority.label()), priority_style),
-                Span::styled(task.title.clone(), title_style),
-            ]))
-        })
+        .map(|&i| ListItem::new(task_line(app, i)))
         .collect();
 
     let title = if app.filter.is_empty() {
@@ -141,7 +167,7 @@ fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
+fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" detail ");
     let Some(task) = app.selected_task() else {
         frame.render_widget(
@@ -153,34 +179,127 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let status = if task.done { "done" } else { "open" };
-    let status_color = if task.done { Color::Green } else { Color::Yellow };
+    let status = if task.done {
+        "done"
+    } else if task.started {
+        "doing"
+    } else {
+        "open"
+    };
+    let status_color = if task.done {
+        Color::Green
+    } else if task.started {
+        Color::Cyan
+    } else {
+        Color::Yellow
+    };
 
-    let body = vec![
+    let label = |text: &'static str| Span::styled(text, Style::default().fg(Color::Cyan));
+
+    let mut body = vec![
         Line::from(vec![
-            Span::styled("title    ", Style::default().fg(Color::Cyan)),
-            Span::styled(task.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            label("title    "),
+            Span::styled(
+                task.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("status   ", Style::default().fg(Color::Cyan)),
+            label("status   "),
             Span::styled(status, Style::default().fg(status_color)),
         ]),
-        Line::from(vec![
-            Span::styled("priority ", Style::default().fg(Color::Cyan)),
-            Span::raw(task.priority.label()),
-        ]),
-        Line::from(vec![
-            Span::styled("tags     ", Style::default().fg(Color::Cyan)),
-            Span::raw(task.tags.join(", ")),
-        ]),
-        Line::from(""),
-        Line::from(Span::raw(task.notes.clone())),
+        Line::from(vec![label("priority "), Span::raw(task.priority.label())]),
+        Line::from(vec![label("tags     "), Span::raw(task.tags.join(", "))]),
     ];
 
+    // A concealed field: `SGR 8` hides it in a real terminal, and the
+    // characters sit in the grid regardless.
+    if let Some(secret) = &task.secret {
+        body.push(Line::from(vec![
+            label("secret   "),
+            Span::styled(secret.clone(), Style::default().add_modifier(Modifier::HIDDEN)),
+        ]));
+    }
+
+    // The hyperlink is drawn here as a plain label; `main` re-emits it
+    // wrapped in OSC 8 once the frame is otherwise complete, because a
+    // cell buffer has nowhere to put a URL.
+    let link_row = body.len();
+    if task.url.is_some() {
+        body.push(Line::from(vec![label("link     "), Span::raw("open ref")]));
+    }
+
+    body.push(Line::from(""));
+    body.push(Line::from(Span::raw(task.notes.clone())));
+
+    let url = task.url.clone();
     frame.render_widget(
-        Paragraph::new(body).block(block).wrap(Wrap { trim: true }),
+        Paragraph::new(body).block(block.clone()).wrap(Wrap { trim: true }),
         area,
     );
+
+    if let Some(url) = url {
+        // Inside the block's border: +1 for the border, +9 for the label.
+        let x = area.x + 1 + 9;
+        let y = area.y + 1 + link_row as u16;
+        if y < area.bottom().saturating_sub(1) {
+            app.link_hint = Some((x, y, "open ref".to_string(), url));
+        }
+    }
+}
+
+/// Three lanes side by side. Titles are truncated to the lane width, which
+/// is where a double-width glyph can be cut in half — the case that makes
+/// column arithmetic worth testing.
+fn render_board(frame: &mut Frame, app: &mut App, area: Rect) {
+    let lanes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(area);
+
+    app.page_size = usize::from(area.height.saturating_sub(2)).max(1);
+
+    for (i, lane) in Lane::ALL.iter().enumerate() {
+        let indices = app.lane_tasks(*lane);
+        let focused = i == app.lane;
+        let items: Vec<ListItem> = indices
+            .iter()
+            .map(|&idx| {
+                let task = &app.tasks[idx];
+                let style = if task.done {
+                    Style::default()
+                        .add_modifier(Modifier::DIM)
+                        .add_modifier(Modifier::CROSSED_OUT)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(Span::styled(task.title.clone(), style)))
+            })
+            .collect();
+
+        let border_style = if focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(format!(" {} ({}) ", lane.title(), indices.len()));
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        let mut state = ListState::default();
+        if focused && !indices.is_empty() {
+            state.select(Some(app.selected.min(indices.len() - 1)));
+        }
+        frame.render_stateful_widget(list, lanes[i], &mut state);
+    }
 }
 
 fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
@@ -198,6 +317,15 @@ fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!("{done}"), Style::default().fg(Color::Green)),
             Span::raw(format!("/{total}")),
         ]),
+        Line::from(vec![
+            Span::styled("lanes    ", Style::default().fg(Color::Cyan)),
+            Span::raw(format!(
+                "{} todo, {} doing, {} done",
+                app.lane_tasks(Lane::Todo).len(),
+                app.lane_tasks(Lane::Doing).len(),
+                app.lane_tasks(Lane::Done).len()
+            )),
+        ]),
         Line::from(""),
         stat_row("HIGH", app.count_by(Priority::High), Color::Red, &bar),
         stat_row("med ", app.count_by(Priority::Medium), Color::Yellow, &bar),
@@ -205,8 +333,7 @@ fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(" stats ")),
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" stats ")),
         area,
     );
 }
@@ -270,6 +397,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             Mode::Filter { .. } => "FILTER",
             Mode::ConfirmDelete => "CONFIRM",
             Mode::Help => "HELP",
+            Mode::Running { .. } => "RUNNING",
         }
     };
 
@@ -279,18 +407,31 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             let shown = if len == 0 { 0 } else { app.selected + 1 };
             format!("{shown}/{len}")
         }
+        Tab::Board => {
+            let len = app.lane_tasks(Lane::ALL[app.lane]).len();
+            let shown = if len == 0 { 0 } else { app.selected.min(len - 1) + 1 };
+            format!("{} {shown}/{len}", Lane::ALL[app.lane].title())
+        }
         Tab::Logs => format!("{}/{}", app.log_offset + 1, app.logs.len()),
         Tab::Stats => "-".to_string(),
     };
 
+    // Unfocused windows dim their chrome — the terminal told us so via
+    // mode 1004.
+    let mode_style = if app.focused {
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .fg(Color::Gray)
+            .add_modifier(Modifier::DIM)
+    };
+
     let mut spans = vec![
-        Span::styled(
-            format!(" {mode} "),
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!(" {mode} "), mode_style),
         Span::raw(format!(" {} ", app.tab.title())),
         Span::raw(format!("{position} ")),
     ];
@@ -298,6 +439,20 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(
             format!("filter:{} ", app.filter),
             Style::default().fg(Color::Yellow),
+        ));
+    }
+    if app.high_contrast {
+        spans.push(Span::styled(
+            "HC ",
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ));
+    }
+    // The toast lives for exactly one frame. Anything that wants to assert
+    // on it has to be able to observe a frame the app immediately replaces.
+    if let Some(toast) = &app.toast {
+        spans.push(Span::styled(
+            format!("· {toast} "),
+            Style::default().fg(Color::Green),
         ));
     }
     spans.push(Span::styled(
@@ -308,6 +463,37 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+fn render_running(frame: &mut Frame, app: &App, area: Rect, pct: u8) {
+    let title = app
+        .selected_task()
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    let popup = popup_area(area, 46, 5);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" running {pct}% "))
+        .style(Style::default().fg(Color::Cyan));
+    let inner = Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+    frame.render_widget(block, popup);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(Paragraph::new(Line::from(Span::raw(title))), rows[0]);
+    frame.render_widget(
+        Gauge::default()
+            .gauge_style(Style::default().fg(Color::Cyan))
+            .percent(u16::from(pct)),
+        rows[1],
+    );
+}
+
 fn render_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(Span::styled(
@@ -316,12 +502,16 @@ fn render_help(frame: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from("  j/k, up/down   move cursor"),
+        Line::from("  h/l            board lane"),
         Line::from("  PgUp/PgDn      move a page"),
         Line::from("  Home/End       first / last"),
         Line::from("  Tab/Shift-Tab  switch tab"),
         Line::from("  space          toggle done"),
         Line::from("  /              filter tasks"),
         Line::from("  d              delete task"),
+        Line::from("  r              run task"),
+        Line::from("  y              yank title"),
+        Line::from("  T              high contrast"),
         Line::from("  ? or F1        this help"),
         Line::from("  q              quit"),
         Line::from("  Ctrl-C         interrupt (exit 130)"),

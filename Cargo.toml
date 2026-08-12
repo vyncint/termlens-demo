@@ -11,6 +11,7 @@ path = "src/main.rs"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 signal-hook = "0.4.4"
+libc = "0.2"
 
 [dev-dependencies]
-termlens = "0.2.0"
+termlens = "0.2.1"
