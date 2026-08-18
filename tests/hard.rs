@@ -1,12 +1,20 @@
 //! The hard cases: taskboard features chosen because they are difficult
 //! or impossible to observe through a screen-grid harness.
 //!
-//! Every test passes. The ones under "unreachable" pass by *pinning the
-//! gap* — they assert that the thing the application demonstrably did is
-//! not visible from the outside, so closing the gap will fail the test
-//! that encodes it. That is the same contract as `tests/limits.rs`.
+//! Every test passes. The ones still under "unreachable" pass by *pinning
+//! the gap* — they assert that the thing the application demonstrably did is
+//! not visible from the outside, so closing the gap will fail the test that
+//! encodes it. That is the same contract as `tests/limits.rs`.
 //!
-//! Run against termlens 0.2.1. `docs/TERMLENS-COVERAGE.md` §3 summarises.
+//! Six of the pins here are gone as of 0.4, moved into "covered": the three
+//! style attributes, the clipboard payload, the progress burst, and the
+//! `DECRQM` capability probe that used to turn `wait_frame` off entirely.
+//! One caveat learned while upgrading: a pin only earns its keep if it
+//! asserts the *mechanism*. `the_clipboard_write_is_unobservable` kept
+//! passing against 0.4 because all it ever checked was that base64 stays off
+//! the grid — still true, and never the claim its name made.
+//!
+//! Run against termlens 0.4.0. `docs/TERMLENS-COVERAGE.md` §3 summarises.
 
 mod common;
 
@@ -87,7 +95,10 @@ fn lane_width_truncates_titles_including_wide_glyphs() -> termlens::Result<()> {
     let screen = t.screen();
     // The middle lane spans columns 30..60 of a 90-column terminal.
     let doing = screen.rect_text(30..60, ..);
-    assert!(doing.contains("帳票"), "the CJK title is in this lane:\n{doing}");
+    assert!(
+        doing.contains("帳票"),
+        "the CJK title is in this lane:\n{doing}"
+    );
     assert!(
         !doing.contains("Wire up the PTY reader"),
         "and the todo lane's content is not:\n{doing}"
@@ -98,29 +109,38 @@ fn lane_width_truncates_titles_including_wide_glyphs() -> termlens::Result<()> {
 // ====================================================== a burst of frames
 
 /// `r` runs the selected task: the event loop paints 0%, 10%, … 100% and a
-/// closing frame back to back, with nothing pacing them. Every one is a
-/// complete DEC 2026 frame, and all but the last are unreachable — the
-/// harness retains one frame, not a history (`docs/TERMLENS-COVERAGE.md`
-/// §2.1) — demonstrated here against the real application rather than a
+/// closing frame back to back, with nothing pacing them — twelve complete
+/// DEC 2026 frames in one burst, against the real application rather than a
 /// synthetic `printf`.
+///
+/// Under 0.2 only the last was observable. As of 0.4 the newest **8** are
+/// retained, so most of the gauge is assertable step by step — and the four
+/// oldest are past the bound, which is the limitation that replaced the old
+/// one. Both halves are asserted here, in that order: the bound first,
+/// because asking for a retained frame advances the cursor past it.
 #[test]
-fn only_the_last_frame_of_a_progress_burst_is_observable() -> termlens::Result<()> {
-    let mut t = spawn_args(&[], Duration::from_millis(600));
+fn a_progress_burst_is_observable_up_to_the_retention_bound() -> termlens::Result<()> {
+    let mut t = spawn_args(&[], Duration::from_secs(5));
 
     t.send(Key::Char('r'));
-    // The end of the burst is deterministic: it is the newest frame.
-    t.wait_frame(|s| s.contains("finished Wire up the PTY reader"))?;
+    // Settle on the live screen; `wait_until` reads the grid, not the frame
+    // ring, so it consumes nothing.
+    t.wait_until(|s| s.contains("finished Wire up the PTY reader"))?;
 
-    // The run definitely painted a 50% frame — the gauge went through it —
-    // but no API can reach back for it.
-    let missed = t.wait_frame(|s| s.contains("running 50%"));
+    // 12 frames, 8 retained: 0%–30% are gone.
+    let dropped = t.wait_frame_for(|s| s.contains("running 0%"), Duration::from_millis(500));
     assert!(
-        matches!(missed, Err(Error::Timeout { .. })),
-        "expected the intermediate frame to be gone, got {missed:?}"
+        matches!(dropped, Err(Error::Timeout { .. })),
+        "the start of the burst is past the retention bound, got {dropped:?}"
     );
 
-    // The run's effect did land.
-    assert!(t.screen().contains("[x] HIGH Wire up"), "{}", t.screen());
+    // …and 40% onwards is there, in the order the gauge drew it.
+    for pct in [40, 50, 60, 70, 80, 90, 100] {
+        let frame = t.wait_frame(|s| s.contains(&format!("running {pct}%")))?;
+        assert!(frame.contains(&format!("running {pct}%")), "{frame}");
+    }
+    let frame = t.wait_frame(|s| s.contains("finished Wire up the PTY reader"))?;
+    assert!(frame.contains("[x] HIGH Wire up"), "{frame}");
     Ok(())
 }
 
@@ -160,13 +180,14 @@ fn the_window_title_follows_the_open_count() -> termlens::Result<()> {
     Ok(())
 }
 
-// ==================================================== unreachable: styles
+// ======================================================= covered: styles
 
-/// A finished task is struck through (`SGR 9`) *and* dimmed. Only the dim
-/// survives the trip through the grid model: `Style` has no
-/// `strikethrough`, so the two attributes are indistinguishable from one.
+/// A finished task is struck through (`SGR 9`) *and* dimmed. Both survive
+/// the trip through the grid model as of 0.4; under 0.2 only the dim did, so
+/// the two attributes were indistinguishable from one and this test pinned
+/// that as a gap.
 #[test]
-fn strikethrough_on_done_titles_is_invisible() -> termlens::Result<()> {
+fn done_titles_are_struck_through_as_well_as_dimmed() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
@@ -174,48 +195,65 @@ fn strikethrough_on_done_titles_is_invisible() -> termlens::Result<()> {
     // video doesn't muddy the comparison.
     let (row, col) = screen.find("Snapshot the screen grid").expect("done task");
     let done = *screen.cell(row, col).unwrap().style();
-    assert!(done.dim, "the dim modifier does survive");
 
     let (row, col) = screen.find("Handle SIGWINCH").expect("open task");
     let open = *screen.cell(row, col).unwrap().style();
 
-    // The only difference the harness can see between a struck-through,
-    // dimmed title and a plain one is the dim.
+    // Two differences now, where 0.2 could see only one.
+    assert!(done.dim && done.strikethrough, "done title: {done:?}");
+    assert!(!open.dim && !open.strikethrough, "open title: {open:?}");
     assert_eq!(
         done,
-        Style { dim: true, ..open },
-        "strikethrough would have to show up as a third difference"
+        Style {
+            dim: true,
+            strikethrough: true,
+            ..open
+        },
+        "and nothing else about the two differs"
     );
     Ok(())
 }
 
-/// The overdue badge blinks (`SGR 5`). Nothing in the model records it, so
-/// `!` is styled exactly like any other red cell.
+/// The overdue badge blinks (`SGR 5`). Under 0.2 nothing in the model
+/// recorded it, so `!` was styled exactly like any other red cell — a
+/// blinking warning and a static one were the same value.
 #[test]
-fn the_blinking_overdue_badge_is_indistinguishable_from_plain_red() -> termlens::Result<()> {
+fn the_overdue_badge_blinks_and_plain_red_does_not() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
     let (row, col) = screen.find("! Handle SIGWINCH").expect("overdue badge");
     let badge = *screen.cell(row, col).unwrap().style();
-    assert_eq!(badge.fg, Color::Indexed(1), "red");
     assert_eq!(
         badge,
         Style {
             fg: Color::Indexed(1),
+            blink: true,
             ..Style::default()
         },
-        "no blink attribute anywhere in the style"
+        "the badge is blinking red"
+    );
+
+    // `find_by` reaches it directly now, which is the assertion an author
+    // actually wants: "is anything on screen demanding attention?"
+    assert_eq!(
+        screen.find_by(|c| c.style().blink),
+        Some((row, col)),
+        "the badge is the only blinking cell"
     );
     Ok(())
 }
 
 /// The secret field is drawn with `SGR 8` (conceal): a real terminal shows
-/// nothing there. The characters are in the grid regardless, so a harness
-/// reads a value the user cannot see — worth knowing before writing a test
-/// that asserts a password field is masked.
+/// nothing there. The characters are in the grid regardless — that part is
+/// correct, and unchanged — but as of 0.4 they carry a marker saying so.
+///
+/// This is the sharpest of the three style gaps, because before the marker
+/// existed a test asserting "the secret is masked" **passed against an
+/// application that printed it in the clear**. The two renderings were the
+/// same value.
 #[test]
-fn a_concealed_field_is_still_readable_in_the_grid() -> termlens::Result<()> {
+fn a_concealed_field_is_marked_concealed() -> termlens::Result<()> {
     let mut t = spawn();
 
     // Select the task that carries a secret.
@@ -223,18 +261,35 @@ fn a_concealed_field_is_still_readable_in_the_grid() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("FILTER"))?;
     t.paste("secret");
     t.send(Key::Enter);
-    t.wait_frame(|s| s.contains("tasks (1) filtered"))?;
+    let screen = t.wait_frame(|s| s.contains("tasks (1) filtered"))?;
 
-    let screen = t.screen();
+    // Still in the grid, exactly as a real terminal holds it…
     assert!(
         screen.contains("hunter2-rotate-me"),
-        "concealed text sits in the grid in clear:\n{screen}"
+        "concealed text is still in the grid:\n{screen}"
     );
+    // …and now distinguishable from text that was never concealed.
     let (row, col) = screen.find("hunter2-rotate-me").unwrap();
+    let secret = *screen.cell(row, col).unwrap().style();
+    assert!(secret.conceal, "the secret is marked concealed: {secret:?}");
+    assert!(
+        (0..screen.cols()).any(|c| screen
+            .cell(row, c)
+            .is_some_and(|cell| !cell.style().conceal && !cell.contents().trim().is_empty())),
+        "and its row also holds unconcealed text, so this is not a blanket flag"
+    );
+
+    // The assertion a test author actually writes: every cell of the secret
+    // is masked, and the label next to it is not.
+    let masked: String = (col..col + 17)
+        .filter(|&c| screen.cell(row, c).is_some_and(|cell| cell.style().conceal))
+        .count()
+        .to_string();
     assert_eq!(
-        *screen.cell(row, col).unwrap().style(),
-        Style::default(),
-        "and carries no marker that it was concealed"
+        masked,
+        "17",
+        "all of it, not just the first cell:\n{}",
+        screen.with_styles()
     );
     Ok(())
 }
@@ -262,16 +317,32 @@ fn the_hyperlink_target_is_unobservable() -> termlens::Result<()> {
 /// application's own UI proves the code path ran; the write itself is
 /// invisible, so "did it copy the right thing?" cannot be asserted.
 #[test]
-fn the_clipboard_write_is_unobservable() -> termlens::Result<()> {
+fn the_clipboard_payload_is_observable() -> termlens::Result<()> {
     let mut t = spawn();
 
     t.send(Key::Char('y'));
-    t.wait_frame(|s| s.contains("· copied"))?;
+    let screen = t.wait_frame(|s| s.contains("· copied"))?;
 
-    let screen = t.screen();
-    // The toast is the only evidence. The base64 payload the app put on the
-    // wire (V2lyZSB1cCB0aGUgUFRZIHJlYWRlcg==) never reaches the grid.
+    // Under 0.2 the toast was the only evidence, and this test asserted only
+    // that the base64 stays off the grid — which is still true, and was never
+    // the claim its name made. The payload itself is now readable, so the
+    // question "did it copy the *right* thing?" is answerable.
     assert!(!screen.contains("V2lyZSB1cCB0aGU"), "{screen}");
+
+    let clip = screen.clipboard().expect("the OSC 52 write was captured");
+    assert_eq!(clip.text(), Some("Wire up the PTY reader"));
+    assert_eq!(clip.targets(), "c", "the clipboard selection, not primary");
+
+    // It tracks the selection, so it is the real payload rather than a
+    // constant that happens to match.
+    t.send(Key::Char('j'));
+    t.wait_frame(|s| s.contains("Tasks 2/13"))?;
+    t.send(Key::Char('y'));
+    let screen = t.wait_frame(|s| s.contains("· copied Snapshot"))?;
+    assert_eq!(
+        screen.clipboard().and_then(|c| c.text()),
+        Some("Snapshot the screen grid")
+    );
     Ok(())
 }
 
@@ -329,7 +400,10 @@ fn a_palette_override_does_not_change_what_the_grid_reports() -> termlens::Resul
     t.wait_frame(|s| s.contains("high contrast on"))?;
 
     let screen = t.screen();
-    assert!(screen.contains("HC"), "the app says it applied it:\n{screen}");
+    assert!(
+        screen.contains("HC"),
+        "the app says it applied it:\n{screen}"
+    );
     let (row, col) = screen.find("HIGH ! Handle").expect("high priority");
     assert_eq!(
         *screen.cell(row, col).unwrap().style(),
@@ -346,8 +420,7 @@ fn a_palette_override_does_not_change_what_the_grid_reports() -> termlens::Resul
 /// unfocused rendering is unreachable — the app is stuck in the focused
 /// branch for the whole life of the test.
 #[test]
-fn focus_events_cannot_be_delivered_so_the_unfocused_view_is_unreachable(
-) -> termlens::Result<()> {
+fn focus_events_cannot_be_delivered_so_the_unfocused_view_is_unreachable() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
@@ -364,43 +437,42 @@ fn focus_events_cannot_be_delivered_so_the_unfocused_view_is_unreachable(
 
 // ================================== the capability probe, end to end
 
-/// The headline case. With `--probe-sync` the application does what a
-/// careful application does: it asks `CSI ? 2026 $ p` whether the terminal
-/// supports synchronized output, and brackets its repaints only if the
-/// answer says yes.
+/// The headline case, and the single highest-leverage change across these
+/// three releases. With `--probe-sync` the application does what a careful
+/// application does: it asks `CSI ? 2026 $ p` whether the terminal supports
+/// synchronized output, and brackets its repaints only if the answer says
+/// yes.
 ///
-/// termlens implements DEC 2026 — `wait_frame` is built on it — but does
-/// not recognise the query that advertises it, so the probe goes
-/// unanswered, the app concludes the terminal has no support, and
-/// `wait_frame` can then never succeed against it. The failure message
-/// blames the application for not emitting frames.
+/// Under 0.2 termlens implemented DEC 2026 — `wait_frame` is built on it —
+/// but did not recognise the query that advertises it. So the probe went
+/// unanswered, the app concluded the terminal had no support, and
+/// `wait_frame` could then never succeed against it, with a failure message
+/// that blamed the application for not emitting frames. This test pinned
+/// that as a gap.
+///
+/// 0.3 answers `DECRQM`. The same unmodified binary is now fully
+/// frame-testable, which is the difference between a harness you write
+/// subjects for and one you point at real programs.
 #[test]
-fn probing_for_synchronized_output_turns_wait_frame_off_entirely() -> termlens::Result<()> {
-    let mut t = spawn_args(&["--probe-sync"], Duration::from_millis(600));
+fn a_probing_application_is_told_that_synchronized_output_works() -> termlens::Result<()> {
+    let mut t = spawn_args(&["--probe-sync"], Duration::from_secs(5));
 
-    // The app is running and perfectly testable by content...
+    // What the application concluded from the answer it got.
     t.send(Key::Tab);
     t.send(Key::Tab);
     t.send(Key::Tab);
     t.wait_until(|s| s.contains("logs (41)"))?;
     let screen = t.screen();
     assert!(
-        screen.contains("DECRQM ?2026 supported: no"),
-        "the app asked and got nothing:\n{screen}"
+        screen.contains("DECRQM ?2026 supported: yes"),
+        "the app asked and was told yes:\n{screen}"
     );
 
-    // ...and completely untestable by frame.
-    let err = t
-        .wait_frame(|_| true)
-        .expect_err("no synchronized updates are being emitted");
-    let message = err.to_string();
-    assert!(
-        message.contains("never emitted a DEC 2026 synchronized update"),
-        "{message}"
-    );
-    // And no note names the query that caused it, because the tracker never
-    // classified `CSI ? 2026 $ p` as a query at all.
-    assert!(!message.contains("queried the terminal"), "{message}");
+    // And because it believed the answer, it brackets its repaints — so the
+    // frame path works, on a binary that was never modified for the harness.
+    t.send(Key::Tab);
+    let frame = t.wait_frame(|s| s.contains("tasks (13)"))?;
+    assert!(frame.contains("NORMAL"), "a complete frame:\n{frame}");
     Ok(())
 }
 
@@ -459,8 +531,7 @@ fn the_nfd_title_does_not_match_an_nfc_needle() -> termlens::Result<()> {
 /// from what a real terminal draws, so the row's rendered width here is not
 /// the width a user sees.
 #[test]
-fn mixed_emoji_widths_land_differently_than_a_real_terminal_draws_them(
-) -> termlens::Result<()> {
+fn mixed_emoji_widths_land_differently_than_a_real_terminal_draws_them() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
@@ -475,10 +546,7 @@ fn mixed_emoji_widths_land_differently_than_a_real_terminal_draws_them(
     println!("row {row}: {cells:?}");
 
     // The flag is two separate narrow cells rather than one wide glyph.
-    assert!(
-        screen.cell(row, 0).is_some(),
-        "sanity: the row exists"
-    );
+    assert!(screen.cell(row, 0).is_some(), "sanity: the row exists");
     assert!(screen.contains("🇻🇳"), "the flag is present as two cells");
     Ok(())
 }
@@ -524,7 +592,10 @@ fn trailing_space_in_a_title_is_indistinguishable_from_padding() -> termlens::Re
 #[test]
 fn clicking_past_column_222_works_under_sgr() -> termlens::Result<()> {
     let mut t = spawn_sized(240, 26);
-    t.wait_frame(|s| s.contains("NORMAL"))?;
+    // No second `wait_frame(NORMAL)` here: `spawn_sized` already consumed
+    // that frame, and as of 0.4 a frame satisfies exactly one wait. This is
+    // the one migration cost of the frame cursor, and it fails loudly (a
+    // full-timeout hang) rather than quietly.
     assert_eq!(t.screen().mouse_mode(), termlens::MouseMode::AnyMotion);
 
     // Row 6 of the list, at a column no legacy report could encode.

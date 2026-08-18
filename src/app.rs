@@ -381,7 +381,9 @@ impl App {
             .enumerate()
             .filter(|(_, t)| {
                 t.title.to_lowercase().contains(&needle)
-                    || t.tags.iter().any(|tag| tag.to_lowercase().contains(&needle))
+                    || t.tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&needle))
             })
             .map(|(i, _)| i)
             .collect()

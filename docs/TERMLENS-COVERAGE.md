@@ -207,6 +207,12 @@ The kitty keyboard probe (`CSI ? u`), DA3, OSC 12, `DECRQM`, `XTGETTCAP`. An
 app that blocks on one still hangs — but the timeout names it, which turns
 a strace-level mystery into a one-line diagnosis.
 
+> **Correction (issue #1).** `DECRQM` was *not* named. It was neither
+> answered nor diagnosed: the `$` intermediate set `csi_invalid`, so the
+> tracker never classified it as a query at all, and an application probing
+> it hung with no note. §5.1 has the end-to-end consequence. `DECRQM` is
+> answered as of 0.3 — see §7.2.
+
 ### 2.6 No scrollback
 Zero scrollback rows, and resizing does not reflow. Anything scrolled off
 the top is unrecoverable. Fine for a full-screen TUI, still a hard wall for
@@ -424,3 +430,212 @@ to check the styles too — which cannot distinguish them either.
    be discoverable only through a note in an unrelated timeout.
 5. **`strikethrough`, `blink`, `conceal` on `Style`** — vt100 already
    exposes them, and §5.3 shows what their absence costs.
+
+> **Correction.** vt100 does *not* expose them. `Attrs` is
+> `{ fgcolor, bgcolor, mode: u8 }` using five of eight bits, and the SGR
+> dispatch handles only `0 1 2 3 4 7 22 23 24 27` plus the colour params, so
+> `5`/`8`/`9` and their resets are dropped before they reach a cell. Shipped
+> in 0.4 anyway, by parsing the stream a second time — see §7.3.
+
+---
+
+# termlens 0.4 — three of five ranked items, and a lesson about pins
+
+Same subject, same suite, two releases later: 0.2.1 → 0.4.0. **140 tests, all
+passing, 0 failures in 15 stress runs** (`tui` 42, `survey` 44,
+`survey_0_2_1` 18, `hard` 23, `limits` 13).
+
+Against §6's ranking: **items 1, 2 and 5 shipped.** Items 3 (the 222 guard)
+and 4 (reply backpressure) are still open, and `v8`/`4.2` still pin them.
+
+## 7. What 0.3 and 0.4 changed
+
+### 7.1 A finding about this study, before any finding about the crate
+
+Bumping the dependency and changing *nothing else* left **9 tests failing and
+9 passing that should have failed.** The nine that failed are the real
+inversions. The nine that passed are the interesting ones, because every file
+here opens with the same promise:
+
+> Every test passes and pins *current* behaviour, so closing the gap will
+> fail the test that encodes it.
+
+It did not hold. Each of these asserted a **symptom** that the closed gap
+still shares with its replacement:
+
+| pin | what it actually asserted | why that survived |
+|---|---|---|
+| `limits::only_the_newest_frame_of_a_burst_survives` | an earlier frame is unreachable | also true once the frame has merely been *consumed* |
+| `limits::output_scrolled_off_the_top_is_unrecoverable` | the visible grid lacks the text | the visible grid lacks it either way |
+| `limits::right_click_and_drag_still_need_hand_rolled_bytes` | hand-rolled SGR bytes work | nothing removed the ability to send raw bytes |
+| `limits::only_wait_until_takes_a_per_call_timeout` | `wait_idle` honours the builder timeout | it still does; the *override* is what was added |
+| `survey::b2_osc52_clipboard_write_is_unobservable` | base64 stays off the grid | still true, and never the claim |
+| `survey::d3_decrqm_probe_..._nor_named` | the timeout names no query | true when answered *or* unanswered — and its cooked-mode `read` could never see a reply anyway |
+| `survey::d4_osc10_foreground_is_always_white` | nothing; it printed | a print cannot fail |
+| `hard::the_clipboard_write_is_unobservable` | base64 stays off the grid | as above |
+| `hard::only_the_last_frame_of_a_progress_burst_is_observable` | 50% is unreachable | it had been consumed by the wait for the end of the burst |
+
+**A pin must assert the mechanism.** Count the frames. Count the history
+rows. Name the API. Read the reply. The rewritten versions do, and they are
+what this section's numbers are based on.
+
+Two of the nine were worse than uninformative: `d3` and `d4` had *two*
+independent reasons to pass, neither of them their claim. And `d3` is the
+`DECRQM` finding — the top of §6's ranking — so the study's own headline ask
+had a test that could not have observed it being granted.
+
+### 7.2 `DECRQM`, end to end
+
+The highest-leverage item in three studies, and the one whose absence
+§5.1 traced to a single unclassified query. 0.3 answers it, so the same
+`--probe-sync` binary that was **completely untestable by frame** now works
+unmodified:
+
+```
+DECRQM ?2026 supported: yes
+```
+
+`hard::a_probing_application_is_told_that_synchronized_output_works` drives
+the whole loop — the app asks, believes the answer, brackets its repaints,
+and `wait_frame` returns a complete frame. That is the difference between a
+harness you write subjects for and one you point at real programs.
+
+0.4 also corrected the *mouse* mode answers: with nothing tracking they now
+report "reset" instead of "not recognized", which closed a loop where
+probe-then-enable applications were told the mouse did not exist and then
+blamed by `click` for not enabling it.
+
+### 7.3 The style model, and the trap it closed
+
+All three rows at the top of §5.3 have moved. Against the same unmodified
+taskboard:
+
+| §5.3 said the harness sees | it now sees |
+|---|---|
+| strikethrough: *only the dim* | `dim strikethrough` — two attributes, not one |
+| blink: *a red cell, no blink* | `fg=1 blink` — `find_by(\|c\| c.style().blink)` finds the badge |
+| conceal: **the secret, in clear**, unmarked | the secret, in clear, **marked concealed** |
+
+The styled snapshot diff is the whole story in two lines:
+
+```
+-4: … 5-9 fg=1 bold reverse; 10-31 dim reverse;            …
++4: … 5-9 fg=1 bold reverse; 10-31 dim reverse strikethrough; …
+-7: … 5-9 fg=1 bold; 10-11 fg=1;      …
++7: … 5-9 fg=1 bold; 10-11 fg=1 blink; …
+```
+
+The conceal row is the one §5.3 said to pause on, and it is worth pausing on
+again now that it is closed. A test asserting "the credentials field is
+masked" used to pass against an application printing the secret in the clear,
+because the two renderings were the same value. `a2` now asserts identical
+`text()` and different `conceal` flags — the assertion that was impossible to
+write.
+
+Note the text is *still* in the grid, and that is correct: a real terminal
+holds it too. What changed is that the harness can tell you it was hidden.
+
+### 7.4 `wait_frame` stopped being able to lie
+
+§6's item 2 asked for "a barrier and a return value". It shipped as a
+**consumption cursor** instead, for a reason worth recording: a strict
+barrier ("only frames completed after the call") contradicts the frame-history
+feature in the same breath, because in a burst the intermediate frames were
+all drawn *before* the call that wants them. A per-terminal cursor — each
+call scans only frames newer than the one it last returned — gives both.
+
+Three separate ways a test could pass while proving nothing, all closed:
+
+- `e2` — `send(key)` then `wait_frame(old_state)` passed vacuously. Now it
+  times out.
+- `e1` — a `wait_frame` after `resize` matched the frame drawn at the old
+  size. Resize now advances the cursor.
+- `e3` — the matched frame was unreachable, so the assertion after the wait
+  read a later, possibly torn, instant. `wait_frame` returns the frame.
+
+And against the real event loop, §5.2's progress burst is now assertable step
+by step: `a_progress_burst_is_observable_up_to_the_retention_bound` walks 40%
+through 100% in the order the gauge drew them, and pins the four frames that
+fell off the 8-frame bound.
+
+### 7.5 Scrollback, clipboard, deadlines
+
+- **Scrollback** is retained (1000 rows by default). taskboard is unaffected
+  — an alternate-screen application accumulates no history, exactly as on a
+  real terminal — which is both why the rest of the suite needed no changes
+  and why the feature is aimed at the other kind of program.
+- **`OSC 52`** payloads are captured: text *and* target selection, with an
+  undecodable payload reported as such rather than as an empty clipboard.
+  `hard::the_clipboard_payload_is_observable` asserts the exact title, and
+  that it tracks the selection rather than being a constant that happens to
+  match.
+- **Every wait takes a per-call deadline** now, `wait_exit_for` included.
+
+### 7.6 One fix nobody wrote down
+
+`survey::f7` pinned that ten writes to an exited child were silently
+discarded, while the docs promised a panic with the screen attached. As of
+0.3 the write path is acknowledged, so the `EIO` reaches the caller and the
+documented contract is finally the behaviour. It is not in the crate's
+changelog; it fell out of the write-deadline work.
+
+### 7.7 The one migration cost
+
+`hard::clicking_past_column_222_works_under_sgr` broke, and not because a gap
+closed: it called `wait_frame(NORMAL)` after `common::spawn_sized` had already
+consumed that frame. Under the cursor, a frame satisfies exactly one wait, so
+the second call waited for a repaint that never came and burned the full
+timeout.
+
+That is the whole upgrade cost, and it is the good kind: a **loud** failure
+(a ten-second hang, not a silent pass) in a test that was redundant anyway.
+The companion discipline is new and does need learning — with eight frames
+retained and scanned oldest first, a predicate true of two of them resolves
+on the *older*. Pinned by
+`limits::a_predicate_true_of_two_retained_frames_matches_the_older`.
+
+## 8. What is still a limitation
+
+`limits.rs` is thirteen tests now, up from nine, because four absences closed
+and six bounds took their place — plus the two ranked items that are still
+open.
+
+- **The frame history is eight deep**, and a predicate true of two retained
+  frames resolves on the older.
+- **`screen()` can be torn** even for a correctly-synchronized application.
+  Documented in 0.4 rather than changed, and the reasoning holds: serving the
+  newest complete frame would let a `wait_until` predicate match content the
+  following `screen()` does not show. `wait_idle` refuses to call an open
+  frame idle, and now says so in the timeout.
+- **Scrollback is bounded, unreflowed, and text only** — three separate
+  bounds, so a style regression above the fold is not assertable.
+- **`wait_frame` still needs the application to opt in.**
+- **Still unanswerable**: kitty `CSI ? u`, DA3, OSC 12, `XTGETTCAP`, and
+  `OSC 52` *reads*, so copy-then-read-back still hangs.
+- **Still open from §6**: the 222 guard fires before the encoding match, so
+  mode 1005 cannot reach the coordinates it exists for (`v8`); and query
+  replies are dropped rather than backpressured past the queue depth (§4.2).
+- **Still outside the model**: `OSC 8` targets, `BEL`, `DECSCUSR`, `OSC 4`
+  redefinition, focus events (mode 1004), NFD/NFC needle matching, trailing
+  whitespace inside a padded pane. Unix only.
+
+## 9. Ranking, revised again
+
+1. **Backpressure rather than drop** (§4.2) — the oldest unaddressed item,
+   and the only remaining one where the harness silently loses data an
+   application asked for. A discarded answer should not be discoverable only
+   through a note in an unrelated timeout.
+2. **Move the 222 guard inside the encoding match** (§4.1) — still the
+   smallest fix on this list, and still wrong in the direction of refusing
+   input the selected encoding can carry.
+3. **`send`/`paste`/`click` returning `Result`** — now the last place the
+   crate panics where it could report. 0.3 made the panic honest and bounded;
+   making it a `Result` would make it composable.
+4. **Focus events** (mode 1004) — the largest untouched category: no API
+   delivers one, so a whole branch of any focus-aware TUI is unreachable.
+5. **Styles in scrollback** (§8) — narrow, but it is exactly the class of
+   application scrollback was added for: a log view that colours by severity
+   cannot be asserted on above the fold.
+
+Nothing on this list can produce a test that passes while proving nothing.
+After §7.1, that is the property worth naming.

@@ -6,11 +6,13 @@
 //! hyperlink label landed (`main` re-emits it wrapped in `OSC 8`, which no
 //! cell-based buffer can express).
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap};
-use ratatui::Frame;
+use ratatui::widgets::{
+    Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap,
+};
 
 use crate::app::{App, Lane, Mode, Priority, Tab};
 
@@ -217,7 +219,10 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     if let Some(secret) = &task.secret {
         body.push(Line::from(vec![
             label("secret   "),
-            Span::styled(secret.clone(), Style::default().add_modifier(Modifier::HIDDEN)),
+            Span::styled(
+                secret.clone(),
+                Style::default().add_modifier(Modifier::HIDDEN),
+            ),
         ]));
     }
 
@@ -234,7 +239,9 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let url = task.url.clone();
     frame.render_widget(
-        Paragraph::new(body).block(block.clone()).wrap(Wrap { trim: true }),
+        Paragraph::new(body)
+            .block(block.clone())
+            .wrap(Wrap { trim: true }),
         area,
     );
 
@@ -409,7 +416,11 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         }
         Tab::Board => {
             let len = app.lane_tasks(Lane::ALL[app.lane]).len();
-            let shown = if len == 0 { 0 } else { app.selected.min(len - 1) + 1 };
+            let shown = if len == 0 {
+                0
+            } else {
+                app.selected.min(len - 1) + 1
+            };
             format!("{} {shown}/{len}", Lane::ALL[app.lane].title())
         }
         Tab::Logs => format!("{}/{}", app.log_offset + 1, app.logs.len()),
@@ -444,7 +455,9 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     if app.high_contrast {
         spans.push(Span::styled(
             "HC ",
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     // The toast lives for exactly one frame. Anything that wants to assert

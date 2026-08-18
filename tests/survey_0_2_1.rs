@@ -94,7 +94,8 @@ fn v3_missing_current_dir_and_empty_program_are_rejected() {
 
 #[test]
 fn v4_paste_now_sends_cr_and_collapses_crlf() -> termlens::Result<()> {
-    let mut t = raw(r"printf '\033[?2004hPASTE='; od -An -c -N14 | tr -d '\n'; printf '\r\nDONE\r\n'");
+    let mut t =
+        raw(r"printf '\033[?2004hPASTE='; od -An -c -N14 | tr -d '\n'; printf '\r\nDONE\r\n'");
     t.wait_until(|s| s.contains("PASTE="))?;
     t.paste("a\r\nb\nc");
     t.wait_until(|s| s.contains("DONE"))?;
@@ -104,7 +105,8 @@ fn v4_paste_now_sends_cr_and_collapses_crlf() -> termlens::Result<()> {
 
 #[test]
 fn v5_embedded_paste_markers_are_stripped() -> termlens::Result<()> {
-    let mut t = raw(r"printf '\033[?2004hPASTE='; od -An -c -N16 | tr -d '\n'; printf '\r\nDONE\r\n'");
+    let mut t =
+        raw(r"printf '\033[?2004hPASTE='; od -An -c -N16 | tr -d '\n'; printf '\r\nDONE\r\n'");
     t.wait_until(|s| s.contains("PASTE="))?;
     t.paste("a\x1b[201~INJECTED");
     t.wait_until(|s| s.contains("DONE"))?;
@@ -196,7 +198,9 @@ fn v13_wait_frame_timeout_now_shows_the_live_screen_not_the_last_frame() -> term
         r"printf '\033[?2026h\033[2J\033[HCOMPLETE-FRAME\033[?2026l'; sleep 0.1; printf '\033[2J\033[HLIVE-TORN'",
     );
     t.wait_until(|s| s.contains("LIVE-TORN"))?;
-    let err = t.wait_frame(|s| s.contains("NEVER")).expect_err("times out");
+    let err = t
+        .wait_frame(|s| s.contains("NEVER"))
+        .expect_err("times out");
     let msg = err.to_string();
     println!("--- v13 --- {}", msg.lines().next().unwrap());
     assert!(msg.contains("LIVE-TORN"), "shows the live screen");

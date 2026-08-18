@@ -11,7 +11,7 @@ mod common;
 use std::time::Duration;
 
 use common::{spawn, spawn_sized, style_at};
-use termlens::{Color, Key, MouseMode, Scroll, Signal, Terminal};
+use termlens::{Color, Key, MouseButton, MouseMode, Scroll, Signal, Terminal};
 
 // ---------------------------------------------------------------- navigation
 
@@ -156,7 +156,10 @@ fn backspace_edits_the_draft_before_it_is_applied() -> termlens::Result<()> {
     t.send(Key::Backspace);
     t.send(Key::Backspace);
     t.wait_frame(|s| s.contains("/do") && !s.contains("/docs"))?;
-    assert!(t.screen().contains("tasks (13)"), "draft is not applied yet");
+    assert!(
+        t.screen().contains("tasks (13)"),
+        "draft is not applied yet"
+    );
 
     // "do" matches the `docs` tag and the title "Windows ConPTY support".
     t.send(Key::Enter);
@@ -255,10 +258,15 @@ fn confirm_dialog_deletes_the_selected_task() -> termlens::Result<()> {
     // The title lives on in the status bar's toast, so scope the "it's
     // gone" assertion to the list pane rather than the whole screen.
     assert!(
-        !screen.rect_text(0..40, 4..24).contains("Wire up the PTY reader"),
+        !screen
+            .rect_text(0..40, 4..24)
+            .contains("Wire up the PTY reader"),
         "{screen}"
     );
-    assert!(screen.contains("· deleted Wire up the PTY reader"), "{screen}");
+    assert!(
+        screen.contains("· deleted Wire up the PTY reader"),
+        "{screen}"
+    );
     assert!(screen.contains("NORMAL"), "{screen}");
     Ok(())
 }
@@ -329,6 +337,68 @@ fn clicking_a_row_selects_it() -> termlens::Result<()> {
     t.click(10, 6)?;
     t.wait_frame(|s| s.contains("Tasks 3/13"))?;
     assert!(t.screen().contains("priority med"), "{}", t.screen());
+    Ok(())
+}
+
+/// 0.2 could only `click` button 0, so right-click needed hand-encoded SGR
+/// bytes (see the note in `tests/limits.rs` §3). taskboard binds right-click
+/// to "clear the applied filter", so the real API drives a real binding.
+#[test]
+fn right_click_clears_the_filter() -> termlens::Result<()> {
+    let mut t = spawn();
+
+    t.send(Key::Char('/'));
+    t.wait_frame(|s| s.contains("FILTER"))?;
+    t.paste("core");
+    t.send(Key::Enter);
+    t.wait_frame(|s| s.contains("filter:core"))?;
+
+    t.click_with(MouseButton::Right, 11, 7)?;
+    let frame = t.wait_frame(|s| s.contains("tasks (13)"))?;
+    assert!(!frame.contains("filter:"), "{frame}");
+    Ok(())
+}
+
+/// The gestures taskboard has no binding for are still worth pinning at the
+/// wire level: what matters is that termlens now *encodes* them, mode-aware,
+/// instead of the test hand-rolling bytes.
+#[test]
+fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()> {
+    // An app that enables any-motion tracking with SGR encoding and echoes
+    // exactly what it receives. Wide enough that 80 bytes of reports plus the
+    // delimiters stay on one row, so no needle straddles a wrap.
+    let mut t = Terminal::builder()
+        .size(120, 6)
+        .env_clear()
+        .timeout(Duration::from_secs(10))
+        .args([
+            "-c",
+            concat!(
+                r"stty -icanon -echo; printf '\033[?1003h\033[?1006h'; printf READY; ",
+                r#"wire=$(head -c 80 | tr '\033' 'E'); printf '|%s|' "$wire"; read x"#
+            ),
+        ])
+        .spawn("/bin/sh")?;
+    t.wait_until(|s| s.contains("READY"))?;
+
+    t.click_with(MouseButton::Right, 10, 4)?; // press + release = 20 bytes
+    t.click_with(MouseButton::Left.ctrl(), 10, 4)?; // button 0 + 16 = 22
+    t.drag(MouseButton::Left, (1, 1), (3, 3))?; // press, motion, release = 28
+    t.scroll(0, 0, Scroll::Left)?; // button 66 = 10 (80 in total)
+
+    t.wait_until(|s| s.text().matches('|').count() == 2)?;
+    let wire = t.screen().text();
+    for expected in [
+        "E[<2;11;5M",  // right press, 1-based on the wire
+        "E[<2;11;5m",  // right release
+        "E[<16;11;5M", // ctrl + left press (button 0 + 16)
+        "E[<0;2;2M",   // drag press at the origin
+        "E[<32;4;4M",  // drag motion, reported at the destination (0 + 32)
+        "E[<0;4;4m",   // drag release, also at the destination
+        "E[<66;1;1M",  // wheel left
+    ] {
+        assert!(wire.contains(expected), "missing {expected} in:\n{wire}");
+    }
     Ok(())
 }
 
@@ -412,7 +482,10 @@ fn priority_and_status_are_colour_coded() {
     assert!(high.bold);
 
     assert_eq!(style_at(&screen, "med  帳票").fg, Color::Indexed(3));
-    assert_eq!(style_at(&screen, "low  Add bracketed").fg, Color::Indexed(2));
+    assert_eq!(
+        style_at(&screen, "low  Add bracketed").fg,
+        Color::Indexed(2)
+    );
 
     // ratatui's `White` is the bright white (SGR 97 → palette 15).
     let status = style_at(&screen, "NORMAL");
@@ -477,7 +550,10 @@ fn rect_text_isolates_a_pane() {
 
     let list = screen.rect_text(0..40, 4..8);
     assert!(list.contains("Wire up the PTY reader"), "{list}");
-    assert!(!list.contains("Drain continuously"), "detail pane bled in:\n{list}");
+    assert!(
+        !list.contains("Drain continuously"),
+        "detail pane bled in:\n{list}"
+    );
 
     let detail = screen.rect_text(41.., ..);
     assert!(detail.contains("Drain continuously"), "{detail}");
@@ -592,7 +668,9 @@ fn signalling_a_reaped_child_is_refused() -> termlens::Result<()> {
     t.send(Key::Char('q'));
     t.wait_exit()?;
 
-    let err = t.signal(Signal::Term).expect_err("pid may have been reused");
+    let err = t
+        .signal(Signal::Term)
+        .expect_err("pid may have been reused");
     assert!(err.to_string().contains("already exited"), "{err}");
     Ok(())
 }
@@ -624,7 +702,10 @@ fn a_single_slow_wait_can_have_its_own_timeout() -> termlens::Result<()> {
         .args(["-c", "sleep 0.6; echo late; read x"])
         .spawn("/bin/sh")?;
 
-    assert!(t.wait_until(|s| s.contains("late")).is_err(), "short timeout");
+    assert!(
+        t.wait_until(|s| s.contains("late")).is_err(),
+        "short timeout"
+    );
     t.wait_until_for(|s| s.contains("late"), Duration::from_secs(5))?;
     Ok(())
 }
