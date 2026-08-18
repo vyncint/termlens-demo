@@ -36,30 +36,39 @@ triggers a graceful shutdown (exit 143).
 cargo test
 ```
 
-- **`tests/tui.rs`** (40) — what termlens covers: text, per-cell styles,
-  cursor, wide glyphs, keys and chords, mouse, paste, resize, terminal state,
-  signals, exit codes, snapshots.
-- **`tests/limits.rs`** (9) — one passing test per remaining limitation, each
-  demonstrating the gap against the real binary and encoding the workaround.
+- **`tests/tui.rs`** (49) — what termlens covers: text, per-cell styles
+  (including strikethrough, blink and conceal), cursor, wide glyphs, keys and
+  chords, the full mouse API, paste, clipboard payloads, frame history,
+  per-call deadlines, resize, terminal state, signals, exit codes, snapshots.
+- **`tests/limits.rs`** (13) — one passing test per remaining limitation. Each
+  asserts the *mechanism* rather than a symptom, because four of the 0.2 pins
+  stayed green against 0.4 while their claims went false.
 
-## Findings — termlens 0.2
+## Findings — termlens 0.4
 
 **[docs/TERMLENS-COVERAGE.md](docs/TERMLENS-COVERAGE.md)** is the write-up.
-It re-runs the 0.1 study against the same app: **11 of the 12 gaps found
-then are closed.**
+It re-runs the study against the same app across three releases (0.2.0 →
+0.4.0): **all three items the 0.2 study ranked shipped, in that order**, and
+so did the two it had written off as outside the model.
 
-- **`wait_frame` is the release.** DEC 2026 synchronized updates mean
-  predicates only ever see complete frames, which deleted all three
-  defensive idioms the 0.1 suite needed. It also *retains* the last complete
-  frame, so a frame the app immediately overwrites is still catchable —
-  measured 5/5 against `wait_until`'s 2/5.
-- **Input reads the app's real modes**: `paste` wraps only if mode 2004 is
-  on, `click` encodes for the tracking mode the app enabled and errors if it
-  enabled none, `send` picks the DECCKM cursor form.
-- **Terminal queries are answered** — and answered truthfully, not with
-  canned strings. Unanswerable ones are named in the timeout message.
-- **`with_styles()`** puts styling into snapshots, so a highlight moving is
-  finally a diff.
-- Still open: no frame *history* (§2.1), `wait_frame` needs the app to opt
-  in (§2.2), `Esc`+key still reads as Alt (§2.3), the mouse API is one
-  button (§2.4), no scrollback, and no `wait_frame_for`.
+- **A methodological finding first.** Bumping the dependency and changing
+  nothing else left every test green — including four pinning tests whose
+  claims had become false. A green pin asserting something false is worse
+  than no pin, so they now assert the mechanism rather than a symptom the
+  mechanism shares with its replacement.
+- **The style model catches a masked field.** `conceal` reaching nothing meant
+  a test asserting a password field is masked passed against an app printing
+  the secret in the clear — identical text, no marker on either cell. Also
+  strikethrough and blink, both now visible as snapshot diffs.
+- **Clipboard payloads are assertable.** `y` copies a title with `OSC 52`;
+  the toast proved only that the code path ran. `Screen::clipboard()` reports
+  the decoded text *and* the target selection.
+- **Frames are a history with an enforced order.** Eight retained, each
+  observable once, in emission order — and a superseded frame can no longer
+  satisfy a wait made after your input.
+- **Scrollback, and `DECRQM` answered** — the latter is why a probe-then-enable
+  application now turns its own mouse on against termlens unmodified.
+- Still open: bounds rather than absences — the 8-frame retention limit, an
+  ambiguous frame predicate resolving on the older frame, `wait_frame` needing
+  the app to opt in, torn `screen()` reads, `Esc`+key reading as Alt, bounded
+  and unstyled scrollback, and `send` panicking rather than returning `Result`.

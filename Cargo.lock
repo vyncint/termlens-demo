@@ -1455,9 +1455,9 @@ dependencies = [
 
 [[package]]
 name = "termlens"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02bbfd1bae2751fc5418e64b8392394dc945f18313cb233a31904b647c291ed5"
+checksum = "2aca61cce655057c858785dd0e5f98f7500f34f8ab68e1940fb3ed5b89c75deb"
 dependencies = [
  "insta",
  "libc",

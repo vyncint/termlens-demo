@@ -11,21 +11,21 @@ mod ui;
 
 use std::io::{self, Stdout};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyEventKind, MouseButton, MouseEventKind,
 };
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
-    EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
-};
 use crossterm::execute;
-use ratatui::backend::CrosstermBackend;
+use crossterm::terminal::{
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    SetTitle, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::app::{App, Quit};
 
@@ -82,6 +82,42 @@ fn restore(terminal: &mut Tui) -> io::Result<()> {
         DisableBracketedPaste
     )?;
     terminal.show_cursor()
+}
+
+/// Put `text` on the system clipboard with `OSC 52`, the way a terminal
+/// application actually does it: base64 in an escape sequence, addressed to
+/// the `c` (clipboard) selection.
+///
+/// Nothing on screen carries the payload — only the app's own "copied"
+/// toast does — which is exactly why a harness has to observe the sequence
+/// itself to know whether the right text was copied.
+fn copy_to_clipboard(text: &str) -> io::Result<()> {
+    use std::io::Write as _;
+    let mut out = io::stdout();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()
+}
+
+/// Minimal standard base64 encoder — not worth a dependency for one call.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let mut bits = 0u32;
+        for (i, &b) in chunk.iter().enumerate() {
+            bits |= u32::from(b) << (16 - 8 * i);
+        }
+        // One input byte encodes two output characters, two encode three,
+        // three encode four; the rest is padding.
+        let chars = chunk.len() + 1;
+        for i in 0..chars {
+            out.push(ALPHABET[((bits >> (18 - 6 * i)) & 0x3f) as usize] as char);
+        }
+        for _ in chars..4 {
+            out.push('=');
+        }
+    }
+    out
 }
 
 /// Draw one frame bracketed in a DEC 2026 synchronized update, so the
@@ -141,6 +177,12 @@ fn event_loop(terminal: &mut Tui) -> io::Result<Quit> {
             app.shutting_down = true;
             draw_frame(terminal, &mut app)?;
             return Ok(Quit::Terminated);
+        }
+
+        // Drain any clipboard request before the repaint, so the toast and
+        // the OSC 52 write land in the same interaction.
+        if let Some(text) = app.pending_clipboard.take() {
+            copy_to_clipboard(&text)?;
         }
 
         draw_frame(terminal, &mut app)?;

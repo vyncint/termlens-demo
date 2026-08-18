@@ -1,5 +1,6 @@
 ---
 source: tests/tui.rs
+assertion_line: 646
 expression: t.screen()
 ---
 size: 90x26  cursor: hidden
@@ -8,15 +9,15 @@ size: 90x26  cursor: hidden
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ tasks (10) ───────────────────────────┐┌ detail ───────────────────────────────────────┐
 │[x] HIGH Wire up the PTY reader        ││title    Wire up the PTY reader                │
-│[x] HIGH Snapshot the screen grid      ││status   done                                  │
-│[ ] med  帳票をレンダリン help ────────────────────────────────┐                        │
-│[ ] HIGH Handle SIGWINCH│keys                                  │                        │
-│[ ] low  Add bracketed p│                                      │                        │
-│[ ] low  Support 🚀 emoj│  j/k, up/down   move cursor          │he kernel buffer never  │
-│[ ] med  Document the wa│  PgUp/PgDn      move a page          │                        │
-│[x] low  Benchmark the p│  Home/End       first / last         │                        │
-│[ ] med  Ship v0.2 style│  Tab/Shift-Tab  switch tab           │                        │
-│[ ] low  Windows ConPTY │  space          toggle done          │                        │
+│[x] HIGH Snapshot the sc┌ help ────────────────────────────────┐                        │
+│[ ] med  帳票をレンダリンkeys                                  │                        │
+│[ ] HIGH Handle SIGWINCH│                                      │                        │
+│[ ] low  Add bracketed p│  j/k, up/down   move cursor          │                        │
+│[ ] low  Support 🚀 emoj│  PgUp/PgDn      move a page          │he kernel buffer never  │
+│[ ] med  Document the wa│  Home/End       first / last         │                        │
+│[x] low  Benchmark the p│  Tab/Shift-Tab  switch tab           │                        │
+│[ ] med  Ship v0.2 style│  space          toggle done          │                        │
+│[ ] low  Windows ConPTY │  y              copy title           │                        │
 │                        │  /              filter tasks         │                        │
 │                        │  d              delete task          │                        │
 │                        │  ? or F1        this help            │                        │

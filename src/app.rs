@@ -117,6 +117,11 @@ pub struct App {
     /// Set while the app is winding down after SIGTERM, so the last frame
     /// can say so before the process leaves.
     pub shutting_down: bool,
+    /// Text the app wants put on the system clipboard, drained by the event
+    /// loop, which is the only part that may touch the terminal.
+    pub pending_clipboard: Option<String>,
+    /// One-shot status-bar toast (e.g. "copied"), cleared on the next key.
+    pub notice: Option<String>,
 }
 
 impl Default for App {
@@ -217,6 +222,8 @@ impl App {
             page_size: 10,
             quit: None,
             shutting_down: false,
+            pending_clipboard: None,
+            notice: None,
         }
     }
 
@@ -231,7 +238,9 @@ impl App {
             .enumerate()
             .filter(|(_, t)| {
                 t.title.to_lowercase().contains(&needle)
-                    || t.tags.iter().any(|tag| tag.to_lowercase().contains(&needle))
+                    || t.tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&needle))
             })
             .map(|(i, _)| i)
             .collect()
@@ -252,6 +261,8 @@ impl App {
 
     /// Feed one key press through the state machine.
     pub fn on_key(&mut self, key: KeyEvent) {
+        // A toast lives for exactly one interaction.
+        self.notice = None;
         // Ctrl-C always wins, in every mode.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = Some(Quit::Interrupted);
@@ -336,6 +347,7 @@ impl App {
             KeyCode::End => self.move_to_end(),
 
             KeyCode::Char(' ') if self.tab == Tab::Tasks => self.toggle_done(),
+            KeyCode::Char('y') if self.tab == Tab::Tasks => self.yank_title(),
             KeyCode::Char('d') if self.tab == Tab::Tasks => {
                 if self.selected_task().is_some() {
                     self.mode = Mode::ConfirmDelete;
@@ -393,6 +405,19 @@ impl App {
         match self.tab {
             Tab::Logs => self.log_offset = value,
             _ => self.selected = value,
+        }
+    }
+
+    /// Copy the selected task's title to the system clipboard.
+    ///
+    /// The app only records the intent; the event loop writes `OSC 52`,
+    /// since it owns the terminal. The toast is deliberately *not* the
+    /// payload — that distinction is the whole point of the clipboard
+    /// coverage in `tests/tui.rs`.
+    fn yank_title(&mut self) {
+        if let Some(task) = self.selected_task() {
+            self.pending_clipboard = Some(task.title.clone());
+            self.notice = Some("copied".to_string());
         }
     }
 

@@ -1,17 +1,23 @@
-//! What termlens 0.2 covers: everything the user can see, type, click or
-//! signal — plus the terminal state around the grid.
+//! What termlens 0.4 covers: everything the user can see, type, click or
+//! signal — plus the terminal state around the grid, the clipboard, and the
+//! frames themselves.
 //!
-//! Every wait here is `wait_frame`, which evaluates only complete DEC 2026
-//! frames. Compare `git show HEAD~1 -- tests/tui.rs`: under 0.1 each of
+//! Most waits here are `wait_frame`, which evaluates only complete DEC 2026
+//! frames and returns the one it matched. Compare the 0.1 suite: each of
 //! these needed a single combined predicate anchored on the last-painted
 //! region, because a predicate could fire on half a frame.
+//!
+//! One discipline is new in 0.4 and worth knowing before reading further:
+//! eight frames are retained and each call scans them oldest first, so a
+//! predicate true of two of them resolves on the earlier. Where that could
+//! bite, these tests name something only the intended frame can show.
 
 mod common;
 
 use std::time::Duration;
 
-use common::{spawn, spawn_sized, style_at};
-use termlens::{Color, Key, MouseMode, Scroll, Signal, Terminal};
+use common::{spawn, spawn_sh, spawn_sized, style_at};
+use termlens::{Color, Key, MouseButton, MouseMode, Scroll, Signal, Terminal};
 
 // ---------------------------------------------------------------- navigation
 
@@ -152,7 +158,10 @@ fn backspace_edits_the_draft_before_it_is_applied() -> termlens::Result<()> {
     t.send(Key::Backspace);
     t.send(Key::Backspace);
     t.wait_frame(|s| s.contains("/do") && !s.contains("/docs"))?;
-    assert!(t.screen().contains("tasks (10)"), "draft is not applied yet");
+    assert!(
+        t.screen().contains("tasks (10)"),
+        "draft is not applied yet"
+    );
 
     // "do" matches the `docs` tag and the title "Windows ConPTY support".
     t.send(Key::Enter);
@@ -402,7 +411,10 @@ fn priority_and_status_are_colour_coded() {
     assert!(high.bold);
 
     assert_eq!(style_at(&screen, "med  帳票").fg, Color::Indexed(3));
-    assert_eq!(style_at(&screen, "low  Add bracketed").fg, Color::Indexed(2));
+    assert_eq!(
+        style_at(&screen, "low  Add bracketed").fg,
+        Color::Indexed(2)
+    );
 
     // ratatui's `White` is the bright white (SGR 97 → palette 15).
     let status = style_at(&screen, "NORMAL");
@@ -467,7 +479,10 @@ fn rect_text_isolates_a_pane() {
 
     let list = screen.rect_text(0..40, 4..8);
     assert!(list.contains("Wire up the PTY reader"), "{list}");
-    assert!(!list.contains("Drain continuously"), "detail pane bled in:\n{list}");
+    assert!(
+        !list.contains("Drain continuously"),
+        "detail pane bled in:\n{list}"
+    );
 
     let detail = screen.rect_text(41.., ..);
     assert!(detail.contains("Drain continuously"), "{detail}");
@@ -582,7 +597,9 @@ fn signalling_a_reaped_child_is_refused() -> termlens::Result<()> {
     t.send(Key::Char('q'));
     t.wait_exit()?;
 
-    let err = t.signal(Signal::Term).expect_err("pid may have been reused");
+    let err = t
+        .signal(Signal::Term)
+        .expect_err("pid may have been reused");
     assert!(err.to_string().contains("already exited"), "{err}");
     Ok(())
 }
@@ -614,8 +631,282 @@ fn a_single_slow_wait_can_have_its_own_timeout() -> termlens::Result<()> {
         .args(["-c", "sleep 0.6; echo late; read x"])
         .spawn("/bin/sh")?;
 
-    assert!(t.wait_until(|s| s.contains("late")).is_err(), "short timeout");
+    assert!(
+        t.wait_until(|s| s.contains("late")).is_err(),
+        "short timeout"
+    );
     t.wait_until_for(|s| s.contains("late"), Duration::from_secs(5))?;
+    Ok(())
+}
+
+// ------------------------------------------------- 0.4: the full style model
+//
+// taskboard renders done titles struck through and the HIGH badge blinking.
+// Under 0.2 both attributes reached nothing, so `dim` and `bold` were all a
+// snapshot could see — two distinct renderings collapsed into one value.
+
+/// The list pane's copy of task `index`'s title. Addressed by position
+/// rather than by `find`, because the selected task's title also appears in
+/// the detail pane on row 4 — and that copy is bold, not struck through, so
+/// `find` would report the wrong cell for any row but the first.
+fn list_title_style(screen: &termlens::Screen, index: u16) -> termlens::Style {
+    const FIRST_ROW: u16 = 4; // below the tab bar and the list's own border
+    const TITLE_COL: u16 = 10; // after "[x] HIGH "
+    *screen
+        .cell(FIRST_ROW + index, TITLE_COL)
+        .unwrap_or_else(|| panic!("no list row {index}:\n{screen}"))
+        .style()
+}
+
+#[test]
+fn done_titles_are_struck_through() -> termlens::Result<()> {
+    let mut t = spawn();
+    let frame = t.screen();
+
+    // Task 0 ("Wire up the PTY reader") is done; task 3 ("Handle SIGWINCH")
+    // is not.
+    let done = list_title_style(&frame, 0);
+    let open = list_title_style(&frame, 3);
+    assert!(done.strikethrough && done.dim, "done title: {done:?}");
+    assert!(!open.strikethrough, "open title: {open:?}");
+
+    // And it tracks the model, in both directions. The *selected* task is
+    // toggled rather than a navigated-to one, which keeps each predicate
+    // true of exactly one retained frame — see
+    // `a_predicate_true_of_two_retained_frames_matches_the_older` in
+    // tests/limits.rs for why that now matters.
+    t.send(Key::Char(' '));
+    let frame = t.wait_frame(|s| s.contains("status   open"))?;
+    assert!(
+        !list_title_style(&frame, 0).strikethrough,
+        "un-doing a task must remove the line:\n{}",
+        frame.with_styles()
+    );
+
+    t.send(Key::Char(' '));
+    let frame = t.wait_frame(|s| s.contains("status   done"))?;
+    assert!(
+        list_title_style(&frame, 0).strikethrough,
+        "re-doing it must put the line back:\n{}",
+        frame.with_styles()
+    );
+    Ok(())
+}
+
+#[test]
+fn the_high_priority_badge_blinks() -> termlens::Result<()> {
+    let t = spawn();
+    let frame = t.screen();
+
+    // `find_by` locates the first blinking cell — the HIGH badge on row 4.
+    let (row, col) = frame
+        .find_by(|c| c.style().blink)
+        .expect("a blinking cell is on screen");
+    assert_eq!(
+        frame.rect_text(col..col + 4, row..row + 1),
+        "HIGH",
+        "the blinking cell should be the priority badge"
+    );
+
+    // The distinction 0.2 could not draw: blinking red vs plain red. Task 2
+    // is `med`, a plain colour, and it is not blinking.
+    let high = *frame.cell(4, 5).expect("row 0 badge").style();
+    let med = *frame.cell(6, 5).expect("row 2 badge").style();
+    assert!(high.blink && high.fg == Color::Indexed(1), "{high:?}");
+    assert!(!med.blink, "med badge: {med:?}");
+    Ok(())
+}
+
+/// The trap: a masked field and clear text are byte-identical in the grid, so
+/// before `Style::conceal` a test asserting "this is masked" passed against
+/// an application that printed the secret in the clear. taskboard has no
+/// password field, so this is reproduced at the terminal level, where the
+/// trap actually lives.
+#[test]
+fn a_masked_field_is_distinguishable_from_clear_text() -> termlens::Result<()> {
+    let concealed = |script: &str| -> termlens::Result<(String, bool)> {
+        let mut t = spawn_sh(script, Duration::from_secs(5));
+        // Pin the cursor: the text is the last thing written, so its arrival
+        // is the finished state.
+        t.wait_until(|s| s.contains("pw: hunter2|") && s.cursor() == (0, 12, true))?;
+        let s = t.screen();
+        let masked = (4..11).all(|col| s.cell(0, col).is_some_and(|c| c.style().conceal));
+        Ok((s.text(), masked))
+    };
+
+    let (masked_text, masked) = concealed(r"printf 'pw: \033[8mhunter2\033[28m|'; read x")?;
+    let (clear_text, clear) = concealed(r"printf 'pw: hunter2|'; read x")?;
+
+    // Identical text — a real terminal holds the characters either way.
+    assert_eq!(masked_text, clear_text);
+    // …and now the two are distinguishable anyway.
+    assert!(masked, "the concealed field must be marked");
+    assert!(!clear, "clear text must fail the same assertion");
+    Ok(())
+}
+
+// --------------------------------------------------- 0.4: clipboard payloads
+
+/// `y` copies the selected title with `OSC 52`. The toast proves the code
+/// path ran; the payload is the behaviour under test, and until 0.4 it was
+/// unobservable — the base64 never reaches the grid.
+#[test]
+fn yanking_a_title_puts_it_on_the_clipboard() -> termlens::Result<()> {
+    let mut t = spawn();
+    assert!(t.screen().clipboard().is_none(), "nothing copied yet");
+
+    t.send(Key::Char('y'));
+    let frame = t.wait_frame(|s| s.contains("copied"))?;
+
+    let clip = frame.clipboard().expect("the OSC 52 write was captured");
+    assert_eq!(clip.text(), Some("Wire up the PTY reader"));
+    assert_eq!(clip.targets(), "c", "the clipboard selection, not primary");
+
+    // The escape never reached the grid — the toast is all the screen shows.
+    assert!(!frame.contains("V2lyZSB1cCB0aGUgUFRZ"), "{frame}");
+
+    // It tracks the selection, so it is the real payload rather than a
+    // constant that happens to match.
+    t.send(Key::Down);
+    t.wait_frame(|s| s.contains("status   done") && !s.contains("copied"))?;
+    t.send(Key::Char('y'));
+    let frame = t.wait_frame(|s| s.contains("copied"))?;
+    assert_eq!(
+        frame.clipboard().and_then(|c| c.text()),
+        Some("Snapshot the screen grid")
+    );
+    Ok(())
+}
+
+// ------------------------------------------- 0.4: frames are a history, in order
+
+/// Several frames can complete inside one read. Each is observable, in the
+/// order taskboard drew them — three keypresses, three frames, each one
+/// asserted on individually rather than only the last surviving.
+#[test]
+fn every_frame_of_a_burst_is_observable_in_order() -> termlens::Result<()> {
+    let mut t = spawn();
+
+    // Three moves, sent without waiting in between, so their repaints can
+    // (and on a loaded machine will) arrive coalesced.
+    t.send(Key::Down);
+    t.send(Key::Down);
+    t.send(Key::Down);
+
+    // Settle on the live screen first — `wait_until` reads the grid, not the
+    // frame ring, so it leaves the frame cursor where it is.
+    t.wait_until(|s| s.contains("Tasks 4/10"))?;
+
+    // Now walk the burst. Each call returns the frame it matched.
+    for expected in ["Tasks 2/10", "Tasks 3/10", "Tasks 4/10"] {
+        let frame = t.wait_frame(|s| s.contains(expected))?;
+        assert!(frame.contains(expected), "{frame}");
+    }
+    Ok(())
+}
+
+/// `wait_frame` returns the instant the predicate matched, which is not
+/// necessarily what `screen()` shows by the time the call returns.
+#[test]
+fn wait_frame_returns_the_frame_it_matched() -> termlens::Result<()> {
+    let mut t = spawn();
+    t.send(Key::Char('/'));
+    let frame = t.wait_frame(|s| s.contains("FILTER"))?;
+
+    // Everything asserted comes off the returned frame, so no second
+    // observation can disagree with the predicate.
+    assert!(frame.contains("FILTER"));
+    assert!(frame.bracketed_paste(), "state travels with the frame too");
+    assert_eq!(frame.title(), "taskboard");
+    Ok(())
+}
+
+// -------------------------------------------------- 0.4: the full mouse API
+
+/// 0.2 could only `click` button 0, so right-click needed hand-encoded SGR
+/// bytes. taskboard clears an applied filter on right-click.
+#[test]
+fn right_click_clears_the_filter() -> termlens::Result<()> {
+    let mut t = spawn();
+
+    t.send(Key::Char('/'));
+    t.wait_frame(|s| s.contains("FILTER"))?;
+    t.paste("core");
+    t.send(Key::Enter);
+    t.wait_frame(|s| s.contains("filter:core"))?;
+
+    t.click_with(MouseButton::Right, 11, 7)?;
+    let frame = t.wait_frame(|s| s.contains("tasks (10)"))?;
+    assert!(!frame.contains("filter:"), "{frame}");
+    Ok(())
+}
+
+/// The gestures taskboard ignores are still worth pinning at the wire level:
+/// what matters is that termlens now *encodes* them, mode-aware, instead of
+/// the test hand-rolling bytes.
+#[test]
+fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()> {
+    // An app that enables any-motion tracking with SGR encoding and dumps
+    // exactly what it receives. Wide enough that 80 bytes of reports and the
+    // delimiters stay on one row, so no needle straddles a wrap.
+    let mut t = Terminal::builder()
+        .size(120, 6)
+        .env_clear()
+        .timeout(Duration::from_secs(10))
+        .args([
+            "-c",
+            concat!(
+                r"stty -icanon -echo; printf '\033[?1003h\033[?1006h'; printf READY; ",
+                r#"wire=$(head -c 80 | tr '\033' 'E'); printf '|%s|' "$wire"; read x"#
+            ),
+        ])
+        .spawn("/bin/sh")?;
+    t.wait_until(|s| s.contains("READY"))?;
+
+    t.click_with(MouseButton::Right, 10, 4)?; // press + release = 20 bytes
+    t.click_with(MouseButton::Left.ctrl(), 10, 4)?; // button 0 + 16 = 22
+    t.drag(MouseButton::Left, (1, 1), (3, 3))?; // press, motion, release = 28
+    t.scroll(0, 0, Scroll::Left)?; // button 66 = 10 (80 in total)
+
+    t.wait_until(|s| s.text().matches('|').count() == 2)?;
+    let wire = t.screen().text();
+    for expected in [
+        "E[<2;11;5M",  // right press, 1-based on the wire
+        "E[<2;11;5m",  // right release
+        "E[<16;11;5M", // ctrl + left press (button 0 + 16)
+        "E[<0;2;2M",   // drag press at the origin
+        "E[<32;4;4M",  // drag motion, reported at the destination (0 + 32)
+        "E[<0;4;4m",   // drag release, also at the destination
+        "E[<66;1;1M",  // wheel left
+    ] {
+        assert!(wire.contains(expected), "missing {expected} in:\n{wire}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------- 0.4: every wait takes a deadline
+
+#[test]
+fn every_wait_takes_a_per_call_deadline() -> termlens::Result<()> {
+    let mut t = Terminal::builder()
+        .size(80, 24)
+        .env_clear()
+        // Deliberately far too short for the waits below.
+        .timeout(Duration::from_millis(150))
+        .args([
+            "-c",
+            r"sleep 0.5; printf '\033[?2026hlate frame\033[?2026l'; sleep 0.3; exit 7",
+        ])
+        .spawn("/bin/sh")?;
+
+    // 0.2 had only `wait_until_for`; the other three had to live with the
+    // builder value, which is what made one slow step raise the deadline for
+    // every wait in the suite.
+    let frame = t.wait_frame_for(|s| s.contains("late frame"), Duration::from_secs(5))?;
+    assert!(frame.contains("late frame"));
+    t.wait_idle_for(Duration::from_millis(50), Duration::from_secs(5))?;
+    let status = t.wait_exit_for(Duration::from_secs(5))?;
+    assert_eq!(status.code(), 7);
     Ok(())
 }
 

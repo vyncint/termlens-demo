@@ -4,13 +4,11 @@
 //! real list height back into `app.page_size` — paging keys should move by a
 //! screenful of whatever the terminal currently is.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
-};
-use ratatui::Frame;
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 
 use crate::app::{App, Mode, Priority, Tab};
 
@@ -95,12 +93,20 @@ fn render_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
                 ("[ ] ", Style::default().fg(Color::DarkGray))
             };
             let priority_style = match task.priority {
-                Priority::High => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                // High priority blinks. A real terminal shows this as a
+                // blinking red badge; a harness that does not model SGR 5
+                // cannot tell it from a plain red one.
+                Priority::High => Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
                 Priority::Medium => Style::default().fg(Color::Yellow),
                 Priority::Low => Style::default().fg(Color::Green),
             };
             let title_style = if task.done {
-                Style::default().add_modifier(Modifier::DIM)
+                // Done titles are dimmed *and* struck through, which is the
+                // usual rendering — and two attributes where a harness
+                // without SGR 9 sees only one.
+                Style::default().add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
             } else {
                 Style::default()
             };
@@ -154,12 +160,19 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let status = if task.done { "done" } else { "open" };
-    let status_color = if task.done { Color::Green } else { Color::Yellow };
+    let status_color = if task.done {
+        Color::Green
+    } else {
+        Color::Yellow
+    };
 
     let body = vec![
         Line::from(vec![
             Span::styled("title    ", Style::default().fg(Color::Cyan)),
-            Span::styled(task.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                task.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("status   ", Style::default().fg(Color::Cyan)),
@@ -205,8 +218,7 @@ fn render_stats(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(" stats ")),
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" stats ")),
         area,
     );
 }
@@ -300,6 +312,14 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Yellow),
         ));
     }
+    // The toast for `y`. It proves the copy path ran; it says nothing about
+    // what was actually put on the clipboard.
+    if let Some(notice) = &app.notice {
+        spans.push(Span::styled(
+            format!("{notice} "),
+            Style::default().fg(Color::Green),
+        ));
+    }
     spans.push(Span::styled(
         "? help  q quit",
         Style::default().fg(Color::DarkGray),
@@ -320,6 +340,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  Home/End       first / last"),
         Line::from("  Tab/Shift-Tab  switch tab"),
         Line::from("  space          toggle done"),
+        Line::from("  y              copy title"),
         Line::from("  /              filter tasks"),
         Line::from("  d              delete task"),
         Line::from("  ? or F1        this help"),
