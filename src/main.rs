@@ -18,8 +18,8 @@ mod ui;
 
 use std::io::{self, Read, Stdout, Write};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::cursor::{RestorePosition, SavePosition};
@@ -29,11 +29,11 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
-    EnterAlternateScreen, LeaveAlternateScreen,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::app::{App, Effect, Mode, Quit};
 
@@ -131,8 +131,7 @@ fn restore(terminal: &mut Tui) -> io::Result<()> {
 
 /// Minimal base64 for `OSC 52`, which takes its payload encoded.
 fn base64(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b = [
@@ -255,7 +254,10 @@ fn read_reply(timeout: Duration) -> Vec<u8> {
 /// means the mode exists.
 fn probe_synchronized_output() -> bool {
     let mut out = io::stdout();
-    if write!(out, "\x1b[?2026$p").and_then(|()| out.flush()).is_err() {
+    if write!(out, "\x1b[?2026$p")
+        .and_then(|()| out.flush())
+        .is_err()
+    {
         return false;
     }
     let reply = read_reply(PROBE_TIMEOUT);
@@ -271,11 +273,11 @@ fn probe_synchronized_output() -> bool {
 /// startup, and report how many answers came back.
 fn probe_capabilities() -> (usize, usize) {
     const PROBES: [&str; 6] = [
-        "\x1b[c",          // DA1
-        "\x1b[>c",         // DA2
-        "\x1b[6n",         // DSR cursor position
-        "\x1b]10;?\x1b\\", // foreground color
-        "\x1b]11;?\x1b\\", // background color
+        "\x1b[c",            // DA1
+        "\x1b[>c",           // DA2
+        "\x1b[6n",           // DSR cursor position
+        "\x1b]10;?\x1b\\",   // foreground color
+        "\x1b]11;?\x1b\\",   // background color
         "\x1bP+q544e\x1b\\", // XTGETTCAP for "TN"
     ];
     let mut out = io::stdout();

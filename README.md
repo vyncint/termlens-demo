@@ -49,10 +49,10 @@ cargo run --bin taskboard -- --probe-sync   # ask DECRQM about DEC 2026 first
 cargo run --bin taskboard -- --probe-caps   # fire six capability probes at startup
 ```
 
-`--probe-sync` is the sharp one: the application brackets its repaints only
-if the terminal says it supports synchronized output, and termlens does not
-recognise the query that asks. Under the harness the same binary therefore
-becomes completely untestable by frame.
+`--probe-sync` was the sharp one: the application brackets its repaints only
+if the terminal says it supports synchronized output, and under 0.2 termlens
+did not recognise the query that asks — so the same binary became completely
+untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 
 ## Tests
 
@@ -60,45 +60,56 @@ becomes completely untestable by frame.
 cargo test
 ```
 
-**135 tests**, 5/5 clean stress runs.
+**140 tests**, 15/15 clean stress runs.
 
-- **`tests/tui.rs`** (40) — what termlens covers: text, per-cell styles,
-  cursor, wide glyphs, keys and chords, mouse, paste, resize, terminal
-  state, signals, exit codes, snapshots.
+- **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
+  cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
+  terminal state, signals, exit codes, snapshots.
 - **`tests/hard.rs`** (23) — the hard cases driven against the application:
-  the board, the frame burst, the capability probe, and one passing test per
-  thing taskboard demonstrably does that no assertion can reach.
-- **`tests/limits.rs`** (9) — one passing test per 0.2 limitation, each
-  demonstrating the gap against the real binary and encoding the workaround.
-- **`tests/survey.rs`** (45) — the same questions asked of plain `/bin/sh`,
+  the board, the frame burst, the capability probe, the clipboard payload,
+  the three style attributes — and one passing test per thing taskboard
+  demonstrably does that *still* no assertion can reach.
+- **`tests/limits.rs`** (13) — one passing test per remaining limitation.
+  Mostly **bounds** now rather than absences, and each asserts the mechanism:
+  four of the 0.2 pins stayed green against 0.4 while their claims went false.
+- **`tests/survey.rs`** (44) — the same questions asked of plain `/bin/sh`,
   so each finding is isolated from any application.
 - **`tests/survey_0_2_1.rs`** (18) — what 0.2.1 changed, and what the new
   code brought with it.
 
 The survey suites print their evidence under `--nocapture`.
 
-## Findings — termlens 0.2.1
+## Findings — termlens 0.4
 
 **[docs/TERMLENS-COVERAGE.md](docs/TERMLENS-COVERAGE.md)** is the write-up:
-the 0.1 → 0.2 study, then a deeper pass against 0.2.1 with this harder
-subject.
+the 0.1 → 0.2 study, a deeper pass against 0.2.1 with this harder subject,
+then §7–9 for 0.4. **Three of the five items §6 ranked have shipped.**
 
-- **0.2 was the release that made the suite ordinary.** `wait_frame` and
-  DEC 2026 deleted all three defensive idioms the 0.1 suite needed, and it
-  *retains* the last complete frame, so a frame the app immediately
-  overwrites is still catchable — measured 5/5 against `wait_until`'s 2/5.
-- **0.2.1 is a good patch**: paste now sends `\r` and strips embedded paste
-  markers, mouse mode 1005 is encoded properly, the builder rejects
-  configurations that cannot work, and query diagnostics now name several
-  probes at once and say when one is *probably not* the cause.
-- **The sharpest remaining gap is one unrecognised query.** termlens
-  implements DEC 2026 but does not answer `CSI ? 2026 $ p`, so an
-  application that asks before using synchronized output never uses it —
-  and `wait_frame` then blames the application for not emitting frames.
-- **Nothing outside the grid is reachable**: hyperlink targets, clipboard
-  writes, the bell, cursor shape, palette overrides, strikethrough, blink
-  and conceal all vanish. Conceal is the one to know about — the concealed
-  text is in the grid in clear.
-- Also open: no frame history, no barrier or return value on `wait_frame`,
-  `Esc`+key still reads as Alt, the mouse API is one button, no scrollback,
-  and no `wait_frame_for`.
+- **A finding about the study first.** Bumping the dependency and changing
+  nothing else left 9 tests failing and **9 passing that should have failed**.
+  Each of those nine asserted a *symptom* the closed gap still shares with its
+  replacement — "no scrollback" pinned on the visible grid, which lacks the
+  text either way. A pin has to assert the mechanism: count the frames, count
+  the history rows, name the API, read the reply. Two of them had *two*
+  independent reasons to pass, neither the claim.
+- **The sharpest gap was one unrecognised query, and it is answered.** With
+  `--probe-sync` the same unmodified binary goes from completely
+  untestable-by-frame to fully frame-testable. Highest-leverage change across
+  three studies.
+- **The style model closed a trap.** A test asserting the credentials field is
+  masked used to pass against an application printing the secret in the clear;
+  `conceal`, `blink` and `strikethrough` now make the two different values.
+  The styled snapshot picks up `dim strikethrough` and `fg=1 blink` against a
+  taskboard nobody changed.
+- **`wait_frame` stopped being able to lie**: a superseded frame, a
+  pre-resize frame, and an unreachable matched frame were three ways a test
+  could pass while proving nothing. All three closed by one consumption
+  cursor, plus a returned `Screen`.
+- **Also new**: scrollback, `OSC 52` payloads, a per-call deadline on every
+  wait — and a fix nobody wrote down, where a write to a dead child now
+  panics as documented instead of being silently discarded.
+- Still open: reply backpressure, the 222 guard firing before the encoding
+  match, `send` panicking rather than returning `Result`, focus events,
+  hyperlink targets, `BEL`, cursor shape, palette overrides, and styles in
+  scrollback. Plus the new bounds: eight retained frames, torn `screen()`
+  reads, and bounded unreflowed text-only history.

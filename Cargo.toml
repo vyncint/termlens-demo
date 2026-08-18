@@ -14,4 +14,4 @@ signal-hook = "0.4.4"
 libc = "0.2"
 
 [dev-dependencies]
-termlens = "0.2.1"
+termlens = "0.4.0"
