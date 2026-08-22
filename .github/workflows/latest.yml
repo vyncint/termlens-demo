@@ -1,0 +1,132 @@
+name: latest
+
+# Runs this suite against the newest **published** termlens, rather than the
+# one the lockfile records.
+#
+# The two are deliberately different jobs. `ci.yml` asks "does the recorded
+# claim still hold?" and is `--locked` so the answer is about this repository.
+# This one asks "does the claim still hold against what a new user would
+# actually install?" — which is the question a demo repository exists to
+# answer, and the one that goes stale on somebody else's release schedule.
+#
+# Always from crates.io, never from a sibling checkout: a study that measured
+# an unreleased working tree records a version nobody can install. And never
+# cached, because a cached dependency is not evidence that `cargo add
+# termlens` resolves, builds and passes today.
+#
+# A failure here is not a bug in this repository. It is either a termlens
+# regression or a claim in `docs/TERMLENS-COVERAGE.md` that has gone false —
+# both worth an issue, and the issue is opened once per version rather than
+# once per run, so a weekly cadence does not become a weekly duplicate.
+
+on:
+  schedule:
+    # Offset from the hour: :00 is the most contended slot on GitHub's
+    # scheduler, and a delayed check is a check that reports late.
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: published version to test, or "latest"
+        required: false
+        default: latest
+  # So a termlens release can trigger this directly:
+  #   gh api repos/vyncint/termlens-demo/dispatches \
+  #     -f event_type=tool-published
+  repository_dispatch:
+    types: [tool-published]
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  against-latest:
+    name: against the published termlens (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      # No rust-cache here, on purpose. See the header.
+
+      - id: resolve
+        name: Resolve the newest published termlens
+        env:
+          WANT: ${{ inputs.version || 'latest' }}
+        run: |
+          if [ "$WANT" = "latest" ] || [ -z "$WANT" ]; then
+            version=$(curl -sSf https://crates.io/api/v1/crates/termlens \
+              -H "User-Agent: termlens-demo latest check (github.com/vyncint/termlens-demo)" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["crate"]["max_stable_version"])')
+          else
+            version="$WANT"
+          fi
+          test -n "$version" || { echo "could not resolve a version" >&2; exit 1; }
+          echo "newest published termlens is $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Point the lockfile at it
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          # An exact requirement, so this job measures the newest published
+          # version even across a major bump that the recorded requirement
+          # would not admit.
+          cargo add "termlens@=$VERSION" --dev --features decode
+          cargo tree -i termlens --depth 0
+
+      - name: Test
+        run: cargo test -- --nocapture
+
+      - name: What the survey measured
+        if: always()
+        run: echo "termlens ${{ steps.resolve.outputs.version }} on ${{ matrix.os }}"
+
+  report:
+    name: report
+    runs-on: ubuntu-latest
+    needs: [against-latest]
+    if: failure() && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open one issue per version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.against-latest.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="latest: the suite does not hold against termlens ${VERSION}"
+          existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "already reported as #$existing"
+            exit 0
+          fi
+          body=$(printf '%s\n\n- version under test: `%s` (from crates.io)\n- run: %s\n\n%s\n\n%s\n' \
+            "The scheduled run against the newest published termlens failed." \
+            "$VERSION" "$RUN_URL" \
+            "This is not necessarily a bug here. Either termlens regressed, or a claim in \`docs/TERMLENS-COVERAGE.md\` has gone false — the second is the more common outcome and the more interesting one." \
+            "Next: reproduce with \`cargo add termlens@=${VERSION} --dev --features decode && cargo test\`, then decide per failing test whether the new behaviour is an improvement (rewrite the pin to assert the mechanism, and write it up) or a regression (file it upstream).")
+          gh issue create --repo "$REPO" --title "$title" --body "$body"

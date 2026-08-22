@@ -29,19 +29,19 @@ fn boots_into_the_tasks_tab_with_the_first_row_selected() {
 fn arrow_and_vim_keys_move_the_selection() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Down);
+    t.send(Key::Down)?;
     t.wait_frame(|s| s.contains("Tasks 2/13"))?;
 
-    t.send(Key::Char('j'));
+    t.send(Key::Char('j'))?;
     // A complete frame means the detail pane is already consistent with the
     // status bar — no second wait, no combined predicate.
     t.wait_frame(|s| s.contains("Tasks 3/13"))?;
     assert!(t.screen().contains("priority med"), "{}", t.screen());
 
-    t.send(Key::Char('k'));
+    t.send(Key::Char('k'))?;
     t.wait_frame(|s| s.contains("Tasks 2/13"))?;
 
-    t.send(Key::Up);
+    t.send(Key::Up)?;
     t.wait_frame(|s| s.contains("Tasks 1/13"))?;
     Ok(())
 }
@@ -50,16 +50,16 @@ fn arrow_and_vim_keys_move_the_selection() -> termlens::Result<()> {
 fn selection_clamps_at_both_ends() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Up);
-    t.send(Key::Up);
+    t.send(Key::Up)?;
+    t.send(Key::Up)?;
     t.wait_frame(|s| s.contains("Tasks 1/13"))?;
 
-    t.send(Key::End);
+    t.send(Key::End)?;
     t.wait_frame(|s| s.contains("Tasks 13/13"))?;
-    t.send(Key::Down);
+    t.send(Key::Down)?;
     t.wait_frame(|s| s.contains("Tasks 13/13"))?;
 
-    t.send(Key::Home);
+    t.send(Key::Home)?;
     t.wait_frame(|s| s.contains("Tasks 1/13"))?;
     Ok(())
 }
@@ -68,15 +68,15 @@ fn selection_clamps_at_both_ends() -> termlens::Result<()> {
 fn page_keys_move_by_a_screenful() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Tab);
-    t.send(Key::Tab);
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("logs (40)"))?;
 
-    t.send(Key::PageDown);
+    t.send(Key::PageDown)?;
     t.wait_frame(|s| s.contains("Logs 21/40"))?;
 
-    t.send(Key::PageUp);
+    t.send(Key::PageUp)?;
     t.wait_frame(|s| s.contains("Logs 1/40"))?;
     Ok(())
 }
@@ -85,19 +85,19 @@ fn page_keys_move_by_a_screenful() -> termlens::Result<()> {
 fn tab_and_backtab_cycle_the_tabs() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("todo ("))?;
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("total    13"))?;
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("logs (40)"))?;
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("tasks (13)"))?;
 
-    t.send(Key::BackTab);
+    t.send(Key::BackTab)?;
     t.wait_frame(|s| s.contains("logs (40)"))?;
     Ok(())
 }
@@ -108,10 +108,10 @@ fn tab_and_backtab_cycle_the_tabs() -> termlens::Result<()> {
 fn ctrl_arrow_chords_switch_tabs() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Right.ctrl());
+    t.send(Key::Right.ctrl())?;
     t.wait_frame(|s| s.contains("todo ("))?;
 
-    t.send(Key::Left.ctrl());
+    t.send(Key::Left.ctrl())?;
     t.wait_frame(|s| s.contains("tasks (13)"))?;
     Ok(())
 }
@@ -123,10 +123,10 @@ fn filter_mode_shows_a_live_cursor_and_narrows_the_list() -> termlens::Result<()
     let mut t = spawn();
     assert!(!t.screen().cursor().2, "cursor should start hidden");
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
 
-    t.send_str("core");
+    t.send_str("core")?;
     t.wait_frame(|s| s.contains("/core"))?;
 
     // Cursor state is part of the frame, so it can be read straight off the
@@ -134,7 +134,7 @@ fn filter_mode_shows_a_live_cursor_and_narrows_the_list() -> termlens::Result<()
     let screen = t.screen();
     assert_eq!(screen.cursor(), (screen.rows() - 2, 5, true), "{screen}");
 
-    t.send(Key::Enter);
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("tasks (4) filtered"))?;
 
     let screen = t.screen();
@@ -148,13 +148,13 @@ fn filter_mode_shows_a_live_cursor_and_narrows_the_list() -> termlens::Result<()
 fn backspace_edits_the_draft_before_it_is_applied() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.send_str("docs");
+    t.send_str("docs")?;
     t.wait_frame(|s| s.contains("/docs"))?;
 
-    t.send(Key::Backspace);
-    t.send(Key::Backspace);
+    t.send(Key::Backspace)?;
+    t.send(Key::Backspace)?;
     t.wait_frame(|s| s.contains("/do") && !s.contains("/docs"))?;
     assert!(
         t.screen().contains("tasks (13)"),
@@ -162,7 +162,7 @@ fn backspace_edits_the_draft_before_it_is_applied() -> termlens::Result<()> {
     );
 
     // "do" matches the `docs` tag and the title "Windows ConPTY support".
-    t.send(Key::Enter);
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("tasks (3) filtered"))?;
     assert!(t.screen().contains("Document the wait"), "{}", t.screen());
     Ok(())
@@ -176,13 +176,13 @@ fn pasting_delivers_one_paste_event() -> termlens::Result<()> {
     let mut t = spawn();
     assert!(t.screen().bracketed_paste(), "app should have enabled 2004");
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
 
-    t.paste("core");
+    t.paste("core")?;
     t.wait_frame(|s| s.contains("/core"))?;
 
-    t.send(Key::Enter);
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("tasks (4) filtered"))?;
     Ok(())
 }
@@ -191,10 +191,10 @@ fn pasting_delivers_one_paste_event() -> termlens::Result<()> {
 fn filter_matches_tags_as_well_as_titles() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.paste("i18n");
-    t.send(Key::Enter);
+    t.paste("i18n")?;
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("tasks (3) filtered"))?;
 
     let screen = t.screen();
@@ -207,12 +207,12 @@ fn filter_matches_tags_as_well_as_titles() -> termlens::Result<()> {
 fn esc_abandons_the_filter_draft() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.send_str("perf");
+    t.send_str("perf")?;
     t.wait_frame(|s| s.contains("/perf"))?;
 
-    t.send(Key::Esc);
+    t.send(Key::Esc)?;
     t.wait_frame(|s| s.contains("NORMAL"))?;
 
     let screen = t.screen();
@@ -225,13 +225,13 @@ fn esc_abandons_the_filter_draft() -> termlens::Result<()> {
 fn esc_in_normal_mode_clears_an_applied_filter() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.send_str("perf");
-    t.send(Key::Enter);
+    t.send_str("perf")?;
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("filter:perf"))?;
 
-    t.send(Key::Esc);
+    t.send(Key::Esc)?;
     // In 0.1 this was the flakiest test in the suite: waiting on the list
     // and then reading the status bar caught the frame half-painted.
     t.wait_frame(|s| s.contains("tasks (13)"))?;
@@ -245,13 +245,13 @@ fn esc_in_normal_mode_clears_an_applied_filter() -> termlens::Result<()> {
 fn confirm_dialog_deletes_the_selected_task() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('d'));
+    t.send(Key::Char('d'))?;
     t.wait_frame(|s| s.contains("delete this task?"))?;
     let screen = t.screen();
     assert!(screen.contains("CONFIRM"), "{screen}");
     assert!(screen.contains("[y] delete   [n] cancel"), "{screen}");
 
-    t.send(Key::Char('y'));
+    t.send(Key::Char('y'))?;
     t.wait_frame(|s| s.contains("tasks (12)"))?;
 
     let screen = t.screen();
@@ -275,10 +275,10 @@ fn confirm_dialog_deletes_the_selected_task() -> termlens::Result<()> {
 fn confirm_dialog_cancels_without_deleting() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('d'));
+    t.send(Key::Char('d'))?;
     t.wait_frame(|s| s.contains("CONFIRM"))?;
 
-    t.send(Key::Char('n'));
+    t.send(Key::Char('n'))?;
     t.wait_frame(|s| s.contains("NORMAL"))?;
 
     let screen = t.screen();
@@ -292,15 +292,15 @@ fn confirm_dialog_cancels_without_deleting() -> termlens::Result<()> {
 fn help_overlay_opens_from_question_mark_and_f1() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('?'));
+    t.send(Key::Char('?'))?;
     t.wait_frame(|s| s.contains("move cursor"))?;
     assert!(t.screen().contains("HELP"), "{}", t.screen());
 
-    t.send(Key::Esc);
+    t.send(Key::Esc)?;
     t.wait_frame(|s| s.contains("NORMAL"))?;
     assert!(!t.screen().contains("move cursor"), "{}", t.screen());
 
-    t.send(Key::F(1));
+    t.send(Key::F(1))?;
     t.wait_frame(|s| s.contains("HELP"))?;
     Ok(())
 }
@@ -313,11 +313,11 @@ fn space_toggles_the_done_marker() -> termlens::Result<()> {
     assert!(screen.contains("[x] HIGH Wire up"), "{screen}");
     assert!(screen.contains("status   done"), "{screen}");
 
-    t.send(Key::Char(' '));
+    t.send(Key::Char(' '))?;
     t.wait_frame(|s| s.contains("[ ] HIGH Wire up"))?;
     assert!(t.screen().contains("status   open"), "{}", t.screen());
 
-    t.send(Key::Char(' '));
+    t.send(Key::Char(' '))?;
     t.wait_frame(|s| s.contains("[x] HIGH Wire up"))?;
     Ok(())
 }
@@ -347,10 +347,10 @@ fn clicking_a_row_selects_it() -> termlens::Result<()> {
 fn right_click_clears_the_filter() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.paste("core");
-    t.send(Key::Enter);
+    t.paste("core")?;
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("filter:core"))?;
 
     t.click_with(MouseButton::Right, 11, 7)?;
@@ -375,7 +375,7 @@ fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()>
             "-c",
             concat!(
                 r"stty -icanon -echo; printf '\033[?1003h\033[?1006h'; printf READY; ",
-                r#"wire=$(head -c 80 | tr '\033' 'E'); printf '|%s|' "$wire"; read x"#
+                r#"wire=$(head -c 90 | tr '\033' 'E'); printf '|%s|' "$wire"; read x"#
             ),
         ])
         .spawn("/bin/sh")?;
@@ -383,8 +383,10 @@ fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()>
 
     t.click_with(MouseButton::Right, 10, 4)?; // press + release = 20 bytes
     t.click_with(MouseButton::Left.ctrl(), 10, 4)?; // button 0 + 16 = 22
-    t.drag(MouseButton::Left, (1, 1), (3, 3))?; // press, motion, release = 28
-    t.scroll(0, 0, Scroll::Left)?; // button 66 = 10 (80 in total)
+    // One motion per cell crossed since 0.5, not one for the whole gesture:
+    // press, two motions, release = 38.
+    t.drag(MouseButton::Left, (1, 1), (3, 3))?;
+    t.scroll(0, 0, Scroll::Left)?; // button 66 = 10 (90 in total)
 
     t.wait_until(|s| s.text().matches('|').count() == 2)?;
     let wire = t.screen().text();
@@ -393,7 +395,8 @@ fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()>
         "E[<2;11;5m",  // right release
         "E[<16;11;5M", // ctrl + left press (button 0 + 16)
         "E[<0;2;2M",   // drag press at the origin
-        "E[<32;4;4M",  // drag motion, reported at the destination (0 + 32)
+        "E[<32;3;3M",  // one motion per cell crossed, interpolated (0 + 32)
+        "E[<32;4;4M",  // and the last one at the destination
         "E[<0;4;4m",   // drag release, also at the destination
         "E[<66;1;1M",  // wheel left
     ] {
@@ -443,7 +446,7 @@ fn terminal_state_around_the_grid_is_readable() -> termlens::Result<()> {
     // ratatui does not set DECCKM, so cursor keys keep their CSI forms.
     assert!(!screen.application_cursor());
 
-    t.send(Key::Char('q'));
+    t.send(Key::Char('q'))?;
     t.wait_exit()?;
     // Leaving the alternate screen is now directly observable.
     t.wait_until(|s| !s.alternate_screen())?;
@@ -466,7 +469,7 @@ fn the_selected_row_is_drawn_in_reverse_video() -> termlens::Result<()> {
     let first_reverse = screen.find_by(|c| c.style().reverse);
     assert_eq!(first_reverse, Some((4, 1)), "highlight on the first row");
 
-    t.send(Key::Down);
+    t.send(Key::Down)?;
     t.wait_frame(|s| s.contains("Tasks 2/13"))?;
     assert_eq!(t.screen().find_by(|c| c.style().reverse), Some((5, 1)));
     Ok(())
@@ -611,7 +614,7 @@ fn the_app_is_usable_at_an_awkward_size() -> termlens::Result<()> {
     assert_eq!(screen.size(), (40, 12));
     assert!(screen.contains("tasks (13)"), "{screen}");
 
-    t.send(Key::End);
+    t.send(Key::End)?;
     t.wait_frame(|s| s.contains("Tasks 13/13"))?;
     Ok(())
 }
@@ -621,11 +624,11 @@ fn the_app_is_usable_at_an_awkward_size() -> termlens::Result<()> {
 #[test]
 fn q_quits_cleanly() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Char('q'));
+    t.send(Key::Char('q'))?;
 
     let status = t.wait_exit()?;
     assert!(status.success(), "status: {status}");
-    assert_eq!(status.code(), 0, "status: {status}");
+    assert_eq!(status.code(), Some(0), "status: {status}");
     assert_eq!(status.signal(), None, "status: {status}");
     Ok(())
 }
@@ -633,12 +636,12 @@ fn q_quits_cleanly() -> termlens::Result<()> {
 #[test]
 fn ctrl_c_exits_with_130() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Ctrl('c'));
+    t.send(Key::Ctrl('c'))?;
 
     let status = t.wait_exit()?;
     assert!(!status.success(), "status: {status}");
     assert_eq!(status.signal(), None, "the app chose the code itself");
-    assert_eq!(status.code(), 130, "status: {status}");
+    assert_eq!(status.code(), Some(130), "status: {status}");
     Ok(())
 }
 
@@ -657,7 +660,7 @@ fn sigterm_shuts_down_gracefully() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("SAVING"))?;
 
     let status = t.wait_exit()?;
-    assert_eq!(status.code(), 143, "128 + SIGTERM; status: {status}");
+    assert_eq!(status.code(), Some(143), "128 + SIGTERM; status: {status}");
     assert_eq!(status.signal(), None, "the app handled it, not the kernel");
     Ok(())
 }
@@ -665,7 +668,7 @@ fn sigterm_shuts_down_gracefully() -> termlens::Result<()> {
 #[test]
 fn signalling_a_reaped_child_is_refused() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Char('q'));
+    t.send(Key::Char('q'))?;
     t.wait_exit()?;
 
     let err = t
@@ -732,7 +735,7 @@ fn snapshot_initial_view_with_styles() {
 #[test]
 fn snapshot_help_overlay() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Char('?'));
+    t.send(Key::Char('?'))?;
     t.wait_frame(|s| s.contains("move cursor"))?;
     termlens::assert_screen_snapshot!(t.screen());
     Ok(())
@@ -741,12 +744,12 @@ fn snapshot_help_overlay() -> termlens::Result<()> {
 #[test]
 fn snapshot_filtered_with_confirm_dialog() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.paste("core");
-    t.send(Key::Enter);
+    t.paste("core")?;
+    t.send(Key::Enter)?;
     t.wait_frame(|s| s.contains("filter:core"))?;
-    t.send(Key::Char('d'));
+    t.send(Key::Char('d'))?;
     t.wait_frame(|s| s.contains("CONFIRM"))?;
     termlens::assert_screen_snapshot!(t.screen());
     Ok(())

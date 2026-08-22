@@ -2,7 +2,7 @@
 //! plain `/bin/sh` so each finding is isolated from any application.
 //! Every claim is reproduced against a real process, never inferred.
 //!
-//! Run against termlens 0.4.0. Nine findings here were gaps in 0.2 and are
+//! Run against termlens 0.6.0. Nine findings here were gaps in 0.2 and are
 //! now coverage: the three style attributes (A), the clipboard payload (B),
 //! the `DECRQM` probe and the configurable foreground (D), the three
 //! `wait_frame` staleness cases (E), and the silent write to a dead child
@@ -11,6 +11,10 @@
 //! Three of those nine **could not have failed** when the gap closed —
 //! `b2`, `d3`, `d4` asserted a symptom, or only printed. Where a finding is
 //! now coverage, its assertions were tightened to name the mechanism.
+//!
+//! Two more moved on the way to 0.6: `c5` (NFD text no longer misses an NFC
+//! needle — 0.5 folds both sides) and `f2`/`f7` (a write to a departed child
+//! is a `Result` rather than a panic). Both kept their numbers.
 
 mod common;
 
@@ -269,20 +273,20 @@ fn c3_zwj_emoji_and_combining_marks() -> termlens::Result<()> {
     Ok(())
 }
 
+/// A gap in 0.2 and 0.4, coverage in 0.5: `contains` and `find` fold both
+/// sides to NFC, so the needle no longer has to guess which normalization
+/// the application's data source used.
 #[test]
-fn c5_nfd_text_does_not_match_an_nfc_needle() -> termlens::Result<()> {
+fn c5_either_normalization_matches() -> termlens::Result<()> {
     // The app prints a decomposed 'é' (e + U+0301), as plenty of real data
     // and every macOS filename does.
     let mut t = raw("printf 'caf\u{65}\u{301} END'");
     t.wait_until(|s| s.contains("END"))?;
     let s = t.screen();
-    assert!(
-        !s.contains("café"),
-        "the obvious needle silently misses:\n{s}"
-    );
+    assert!(s.contains("café"), "the obvious needle now hits:\n{s}");
     assert!(
         s.contains("caf\u{65}\u{301}"),
-        "only the decomposed form hits"
+        "and the decomposed form still does"
     );
     Ok(())
 }
@@ -469,7 +473,7 @@ fn e2_a_frame_already_returned_cannot_satisfy_a_second_wait() -> termlens::Resul
     let mut t = raw(r"printf '\033[?2026h\033[2J\033[HSTATE-A\033[?2026l'");
     t.wait_frame(|s| s.contains("STATE-A"))?;
 
-    t.send(Key::Char('x')); // the child never repaints in response
+    t.send(Key::Char('x'))?; // the child never repaints in response
     let vacuous = t.wait_frame_for(|s| s.contains("STATE-A"), Duration::from_millis(400));
     assert!(
         vacuous.is_err(),
@@ -517,7 +521,7 @@ fn f1_signal_death_reports_a_string_not_a_number() -> termlens::Result<()> {
     t.signal(termlens::Signal::Kill)?;
     let status = t.wait_exit()?;
     println!(
-        "--- f1 --- code={} success={} signal={:?} display={status}",
+        "--- f1 --- code={:?} success={} signal={:?} display={status}",
         status.code(),
         status.success(),
         status.signal()
@@ -531,10 +535,12 @@ fn f2_send_after_exit() -> termlens::Result<()> {
     t.wait_until(|s| s.contains("BYE"))?;
     let status = t.wait_exit()?;
     println!("exited: {status}");
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        t.send(Key::Char('z'));
-    }));
-    println!("--- f2 --- send after exit panicked: {}", result.is_err());
+    let refused = t.send(Key::Char('z'));
+    println!("--- f2 --- send after exit refused: {refused:?}");
+    assert!(
+        refused.is_err(),
+        "typing at a dead child is an error, not a write"
+    );
     Ok(())
 }
 
@@ -544,8 +550,8 @@ fn f3_char_above_ascii_is_sent_as_utf8_not_a_raw_byte() -> termlens::Result<()> 
         r#"stty raw -echo; printf 'BYTES='; od -An -tx1 -N3 | tr -d '\n'; printf '\r\nDONE\r\n'; head -c 1 >/dev/null"#,
     );
     t.wait_until(|s| s.contains("BYTES="))?;
-    t.send(Key::Char('\u{80}')); // one codepoint...
-    t.send(Key::Char('!'));
+    t.send(Key::Char('\u{80}'))?; // one codepoint...
+    t.send(Key::Char('!'))?;
     t.wait_until(|s| s.contains("DONE"))?;
     println!("--- f3 --- {:?}", t.screen().row_text(0).trim_end());
     Ok(())
@@ -558,7 +564,7 @@ fn f6_sigterm_signal_string() -> termlens::Result<()> {
     t.signal(termlens::Signal::Term)?;
     let status = t.wait_exit()?;
     println!(
-        "--- f6 --- code={} signal={:?} display={status}",
+        "--- f6 --- code={:?} signal={:?} display={status}",
         status.code(),
         status.signal()
     );
@@ -574,12 +580,14 @@ fn f6_sigterm_signal_string() -> termlens::Result<()> {
 /// Not listed as a fix in the crate's changelog; it fell out of the
 /// write-deadline work.
 #[test]
-#[should_panic(expected = "failed to send")]
-fn f7_send_after_exit_panics_as_documented() {
+fn f7_send_after_exit_is_refused_by_value() {
     let mut t = sh("printf 'BYE\\n'");
     t.wait_until(|s| s.contains("BYE")).expect("output");
     t.wait_exit().expect("exit");
-    t.send(Key::Char('z'));
+    let error = t
+        .send(Key::Char('z'))
+        .expect_err("a dead child cannot be typed at");
+    println!("--- f7 --- {error}");
 }
 
 // ============================================================== H. more gaps

@@ -60,7 +60,7 @@ untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 cargo test
 ```
 
-**140 tests**, 15/15 clean stress runs.
+**150 tests**, against termlens 0.6.0.
 
 - **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
   cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
@@ -71,45 +71,56 @@ cargo test
   demonstrably does that *still* no assertion can reach.
 - **`tests/limits.rs`** (13) — one passing test per remaining limitation.
   Mostly **bounds** now rather than absences, and each asserts the mechanism:
-  four of the 0.2 pins stayed green against 0.4 while their claims went false.
+  four of the 0.2 pins stayed green against 0.4 while their claims went
+  false, and six more did the same on the way to 0.6.
 - **`tests/survey.rs`** (44) — the same questions asked of plain `/bin/sh`,
   so each finding is isolated from any application.
 - **`tests/survey_0_2_1.rs`** (18) — what 0.2.1 changed, and what the new
   code brought with it.
+- **`tests/survey_0_6_0.rs`** (10) — the inline-graphics surface, probed with
+  hand-written escapes whose every byte is known: images counted as images
+  rather than as escapes, deletes counted apart, placement, and the pixels
+  themselves.
 
 The survey suites print their evidence under `--nocapture`.
 
-## Findings — termlens 0.4
+## Findings — termlens 0.6
 
 **[docs/TERMLENS-COVERAGE.md](docs/TERMLENS-COVERAGE.md)** is the write-up:
 the 0.1 → 0.2 study, a deeper pass against 0.2.1 with this harder subject,
-then §7–9 for 0.4. **Three of the five items §6 ranked have shipped.**
+§7–9 for 0.4, then §10–12 for 0.6. **Three of the five items §9 ranked have
+shipped** — the same score as last time.
 
-- **A finding about the study first.** Bumping the dependency and changing
-  nothing else left 9 tests failing and **9 passing that should have failed**.
-  Each of those nine asserted a *symptom* the closed gap still shares with its
-  replacement — "no scrollback" pinned on the visible grid, which lacks the
-  text either way. A pin has to assert the mechanism: count the frames, count
-  the history rows, name the API, read the reply. Two of them had *two*
-  independent reasons to pass, neither the claim.
-- **The sharpest gap was one unrecognised query, and it is answered.** With
-  `--probe-sync` the same unmodified binary goes from completely
-  untestable-by-frame to fully frame-testable. Highest-leverage change across
-  three studies.
-- **The style model closed a trap.** A test asserting the credentials field is
-  masked used to pass against an application printing the secret in the clear;
-  `conceal`, `blink` and `strikethrough` now make the two different values.
-  The styled snapshot picks up `dim strikethrough` and `fg=1 blink` against a
-  taskboard nobody changed.
-- **`wait_frame` stopped being able to lie**: a superseded frame, a
-  pre-resize frame, and an unreachable matched frame were three ways a test
-  could pass while proving nothing. All three closed by one consumption
-  cursor, plus a returned `Screen`.
-- **Also new**: scrollback, `OSC 52` payloads, a per-call deadline on every
-  wait — and a fix nobody wrote down, where a write to a dead child now
-  panics as documented instead of being silently discarded.
-- Still open: reply backpressure, the 222 guard firing before the encoding
-  match, `send` panicking rather than returning `Result`, focus events,
-  hyperlink targets, `BEL`, cursor shape, palette overrides, and styles in
-  scrollback. Plus the new bounds: eight retained frames, torn `screen()`
-  reads, and bounded unreflowed text-only history.
+- **A finding about the study first, again.** Bumping the dependency and
+  changing nothing else left 5 tests failing and **6 passing that should have
+  failed** — in three shapes, only one of which the 0.4 pass had seen. A pin
+  that asserted a *symptom* (the bell leaves the grid untouched — still true,
+  now beside the point). A pin that only **printed** its measurement, so it
+  could not fail when the thing it watched for was fixed. And a pin whose
+  assertion was **true for opposite reasons**: a `DECRQM` timeout lacking a
+  phrase, which held both when the query was unrecognised and once it was
+  answered.
+- **§9's number-one item shipped, and this suite reported it to a log.**
+  Reply loss is gone: 1500 queries asked, 1500 answered, and nothing lost at
+  any batch size measured — where 0.2.1 lost 715 of 1000. The two tests
+  watching for it had no assertions. They do now.
+- **A branch of the subject that had never run.** taskboard dims its status
+  bar when the terminal reports lost focus, and before 0.5 no input could
+  enter that branch — not untested, unreachable. `focus_in`/`focus_out` reach
+  it, and the test now crosses the boundary in both directions.
+- **Inline graphics: the assertion no cell can carry.** An image transmitted,
+  chunked, deleted, placed — and, with the `decode` feature, the pixels
+  themselves. Nothing on screen changes for any of it, which is exactly why
+  it needed an API rather than a needle.
+- **`XTGETTCAP` is answered**, so all six of taskboard's startup capability
+  probes now come back; and `contains`/`find` fold both sides to **NFC**, so
+  the needle a test author types finds text the application normalized the
+  other way.
+- **Two breaking changes, 113 call sites**: `send`/`send_str`/`paste` return
+  `Result` (one `?` each), and `ExitStatus::code` returns `Option<u32>`. Plus
+  one silent change that cost more to find than either: `drag` now reports one
+  motion per cell crossed, which pushed a fixed-size wire read off the end of
+  the gesture it was measuring.
+- Still open: the 222 guard firing before the encoding match, styles in
+  scrollback and in `rect_text`, `OSC 52` reads, hyperlink targets,
+  `DECSCUSR`, palette overrides — and no opt-out from a torn `screen()`.

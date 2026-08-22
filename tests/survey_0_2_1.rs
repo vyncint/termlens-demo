@@ -41,9 +41,14 @@ fn v1_zero_dimensions_are_rejected_at_spawn_and_resize() -> termlens::Result<()>
     Ok(())
 }
 
+/// Unchecked in 0.2.1: a 1500x1500 grid was accepted, and every snapshot
+/// after it cost 2.25M cells — a suite that looked hung rather than slow.
+/// **A later version caps each axis at 1000 and says why in the error**,
+/// which is the whole difference between the two failure modes. The cost
+/// curve below is why the cap is worth having.
 #[test]
-fn v2_upper_bound_is_unchecked_and_snapshots_cost_area() -> termlens::Result<()> {
-    for (cols, rows) in [(80u16, 24u16), (500, 500), (1500, 1500)] {
+fn v2_upper_bound_is_checked_and_snapshots_cost_area() -> termlens::Result<()> {
+    for (cols, rows) in [(80u16, 24u16), (500, 500)] {
         let spawn_start = Instant::now();
         let mut t = Terminal::builder()
             .size(cols, rows)
@@ -64,6 +69,16 @@ fn v2_upper_bound_is_unchecked_and_snapshots_cost_area() -> termlens::Result<()>
             text_start.elapsed()
         );
     }
+
+    let refused = Terminal::builder()
+        .size(1500, 1500)
+        .env_clear()
+        .timeout(Duration::from_secs(10))
+        .args(["-c", "true"])
+        .spawn("/bin/sh")
+        .expect_err("1500 is past the per-axis limit");
+    assert!(matches!(refused, Error::Input(_)), "{refused:?}");
+    println!("--- v2 --- 1500x1500 refused: {refused}");
     Ok(())
 }
 
@@ -97,7 +112,7 @@ fn v4_paste_now_sends_cr_and_collapses_crlf() -> termlens::Result<()> {
     let mut t =
         raw(r"printf '\033[?2004hPASTE='; od -An -c -N14 | tr -d '\n'; printf '\r\nDONE\r\n'");
     t.wait_until(|s| s.contains("PASTE="))?;
-    t.paste("a\r\nb\nc");
+    t.paste("a\r\nb\nc")?;
     t.wait_until(|s| s.contains("DONE"))?;
     println!("--- v4 --- {:?}", t.screen().row_text(0).trim_end());
     Ok(())
@@ -108,7 +123,7 @@ fn v5_embedded_paste_markers_are_stripped() -> termlens::Result<()> {
     let mut t =
         raw(r"printf '\033[?2004hPASTE='; od -An -c -N16 | tr -d '\n'; printf '\r\nDONE\r\n'");
     t.wait_until(|s| s.contains("PASTE="))?;
-    t.paste("a\x1b[201~INJECTED");
+    t.paste("a\x1b[201~INJECTED")?;
     t.wait_until(|s| s.contains("DONE"))?;
     println!("--- v5 --- {:?}", t.screen().row_text(0).trim_end());
     Ok(())
@@ -118,7 +133,7 @@ fn v5_embedded_paste_markers_are_stripped() -> termlens::Result<()> {
 fn v6_paste_without_bracketed_mode_also_rewrites_newlines() -> termlens::Result<()> {
     let mut t = raw(r"printf 'PASTE='; od -An -c -N3 | tr -d '\n'; printf '\r\nDONE\r\n'");
     t.wait_until(|s| s.contains("PASTE="))?;
-    t.paste("a\nb"); // no mode 2004 enabled
+    t.paste("a\nb")?; // no mode 2004 enabled
     t.wait_until(|s| s.contains("DONE"))?;
     println!("--- v6 --- {:?}", t.screen().row_text(0).trim_end());
     Ok(())
@@ -210,8 +225,15 @@ fn v13_wait_frame_timeout_now_shows_the_live_screen_not_the_last_frame() -> term
 
 // ============================================ 5. the new responder thread
 
+/// 0.2.1 dropped replies past roughly a hundred unread, silently: 200
+/// queries returned 173 answers, 400 returned 235, 1000 returned 285. The
+/// reply queue is now bounded by undelivered *bytes* rather than by slots,
+/// so nothing a well-behaved application asked for is lost.
+///
+/// The 0.2.1 version of this test only printed its measurement, so it could
+/// not have failed when the loss stopped — and did not. It asserts now.
 #[test]
-fn v14_batched_queries_lose_replies_silently() -> termlens::Result<()> {
+fn v14_a_batch_of_queries_is_answered_in_full() -> termlens::Result<()> {
     // A legitimate pattern: probe several capabilities, then read all the
     // answers. Here it is exaggerated to make the loss deterministic.
     let script = r#"stty raw -echo
@@ -239,11 +261,15 @@ head -c 1 >/dev/null"#;
         .unwrap_or("")
         .to_owned();
     println!("--- v14 --- asked 1500, {line}");
+    assert!(
+        line.contains("GOT=1500"),
+        "every reply delivered; got: {line}"
+    );
     Ok(())
 }
 
 #[test]
-fn v15_reply_backlog_note_appears() -> termlens::Result<()> {
+fn v15_what_a_non_reading_application_is_told() -> termlens::Result<()> {
     let script = r#"stty raw -echo
 i=0; while [ $i -lt 1500 ]; do printf '\033[6n'; i=$((i+1)); done
 printf 'ASKED'
@@ -280,7 +306,7 @@ head -c 1 >/dev/null"#;
             .args(["-c", script])
             .spawn("/bin/sh")?;
         t.wait_until(|s| s.contains("READY"))?;
-        t.send(Key::Char('Z'));
+        t.send(Key::Char('Z'))?;
         t.wait_until(|s| s.contains("ORDER="))?;
         let s = t.screen();
         let line = s
@@ -294,8 +320,11 @@ head -c 1 >/dev/null"#;
     Ok(())
 }
 
+/// Where the loss used to begin, swept across batch sizes. Every size is
+/// now answered in full; the sweep is kept because a regression would show
+/// up here as a threshold rather than as a single number.
 #[test]
-fn v18_where_reply_loss_begins() -> termlens::Result<()> {
+fn v18_no_batch_size_loses_a_reply() -> termlens::Result<()> {
     for batch in [50u32, 200, 400, 600, 1000] {
         let script = format!(
             r#"stty raw -echo
@@ -325,19 +354,38 @@ head -c 1 >/dev/null"#
             .trim()
             .to_owned();
         println!("--- v18 --- asked {batch}, {got}");
+        assert!(
+            got.contains(&format!("GOT={batch}")),
+            "batch of {batch} answered in full; got: {got}"
+        );
     }
     Ok(())
 }
 
 // ============================================== 6. still-open from 0.2.0
 
+/// Unrecognised in 0.2.1 and answered since 0.3, which is the single
+/// highest-leverage change across these releases: an application that
+/// probes for synchronized output before bracketing its repaints is now
+/// told the truth, so `wait_frame` works against it unmodified.
+///
+/// The 0.2.1 version of this test read a *line*, which a `DECRQM` reply
+/// never terminates, so it timed out either way and asserted only that the
+/// timeout text lacked a phrase — true when the query was unrecognised and
+/// equally true once it was answered. This one reads the reply's own
+/// length and looks at what came back.
 #[test]
-fn v17_decrqm_2026_probe_still_unrecognised() {
-    let mut t = sh(r#"printf '\033[?2026$p'; read -r r; printf 'GOT'; read x"#);
-    let err = t.wait_until(|s| s.contains("GOT")).expect_err("no reply");
-    assert!(
-        !err.to_string().contains("queried the terminal"),
-        "still not diagnosed: {err}"
+fn v17_decrqm_2026_probe_is_answered() -> termlens::Result<()> {
+    let mut t = sh(
+        r#"stty raw -echo; printf '\033[?2026$p'; r=$(head -c 11 | tr -d '\033'); printf 'GOT=%s|' "$r"; head -c 1 >/dev/null"#,
     );
-    println!("--- v17 --- unchanged in 0.2.1");
+    t.wait_until(|s| s.contains("GOT="))?;
+    let text = t.screen().text();
+    let line = text.lines().find(|l| l.contains("GOT=")).unwrap_or("");
+    println!("--- v17 --- {}", line.trim());
+    assert!(
+        line.contains("[?2026;"),
+        "a real DECRQM report for mode 2026, not a timeout: {line}"
+    );
+    Ok(())
 }
