@@ -686,13 +686,38 @@ important measurements in §4.2 had none.
   measured reply delivery and printed the number. Under 0.2.1 those numbers
   were 200 asked → 173 answered, 400 → 235, 1000 → 285. Under 0.6:
 
-  | asked | 50 | 200 | 400 | 600 | 1000 | 1500 |
-  |---|---|---|---|---|---|---|
-  | answered | 50 | 200 | 400 | 600 | 1000 | 1500 |
+  | asked | 50 | 200 | 400 | 600 | 1000 |
+  |---|---|---|---|---|---|
+  | answered | 50 | 200 | 400 | 600 | 1000 |
 
-  Nothing is lost, at any batch size measured. This was **§9's number-one
-  ranked item**, it shipped, and the two tests that existed to watch for it
-  reported the good news to a log nobody reads. Both assert now.
+  Nothing is lost up to 1000, on Linux and macOS alike. This was **§9's
+  number-one ranked item**, it shipped, and the two tests that existed to
+  watch for it reported the good news to a log nobody reads. Both assert now.
+
+  **The ceiling is 1000 here for a reason, and finding it cost a wrong claim
+  first.** The assertion originally went in at 1500, because 1500 of 1500
+  arrived on the machine it was written on. CI disagreed twice over, in
+  opposite directions: a loaded Linux runner delivered **376 of 1500**, and
+  macOS delivered all 1500 but failed the assertion anyway, because BSD `wc
+  -c` pads its output with leading spaces and `GOT=    1500` does not contain
+  `GOT=1500`.
+
+  The Linux number is the interesting one, and it is not a termlens defect.
+  0.5's changelog says exactly what it is:
+
+  > a write into a full terminal input queue blocks on macOS, where the
+  > backlog stays visible and the count is exact, while Linux's `n_tty`
+  > *discards* input
+
+  Past the tty buffer the platforms stop agreeing, and no promise the crate
+  makes can cover it — the queue termlens owns is memory-bounded and drops
+  nothing; the kernel's is neither. 1000 is the largest batch that fully
+  delivers on both, so it is the largest one this file can assert.
+
+  Worth stating plainly, because it is the same error this section is about:
+  **"nothing is lost, at any batch size measured" was a claim about one
+  machine**, written from a green run, and it would have gone into this study
+  as a fact about the crate.
 
 **True for opposite reasons**, which is the shape §7.1 did not have.
 
