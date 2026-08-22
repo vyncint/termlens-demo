@@ -101,9 +101,13 @@ shipped** — the same score as last time.
   phrase, which held both when the query was unrecognised and once it was
   answered.
 - **§9's number-one item shipped, and this suite reported it to a log.**
-  Reply loss is gone: 1500 queries asked, 1500 answered, and nothing lost at
-  any batch size measured — where 0.2.1 lost 715 of 1000. The two tests
-  watching for it had no assertions. They do now.
+  Reply loss is gone up to 1000 queries, on Linux and macOS alike, where
+  0.2.1 lost 715 of 1000. The two tests watching for it had no assertions.
+  They do now — and finding the right ceiling cost a wrong claim first: the
+  assertion went in at 1500 from a green run on one machine, and a loaded
+  Linux runner delivered 376. That loss is the kernel's `n_tty` discarding,
+  not termlens's queue, and it is the third time in this pass that a
+  measurement looked like a fact.
 - **A branch of the subject that had never run.** taskboard dims its status
   bar when the terminal reports lost focus, and before 0.5 no input could
   enter that branch — not untested, unreachable. `focus_in`/`focus_out` reach

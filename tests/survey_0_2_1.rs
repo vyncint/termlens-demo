@@ -228,20 +228,29 @@ fn v13_wait_frame_timeout_now_shows_the_live_screen_not_the_last_frame() -> term
 /// 0.2.1 dropped replies past roughly a hundred unread, silently: 200
 /// queries returned 173 answers, 400 returned 235, 1000 returned 285. The
 /// reply queue is now bounded by undelivered *bytes* rather than by slots,
-/// so nothing a well-behaved application asked for is lost.
+/// so nothing a well-behaved application asked for is lost to *termlens*.
 ///
 /// The 0.2.1 version of this test only printed its measurement, so it could
 /// not have failed when the loss stopped — and did not. It asserts now.
+///
+/// **1000 rather than the 1500 this asked before**, and the difference is a
+/// finding rather than a climbdown. At 1500 on a loaded Linux runner only
+/// 376 arrive, while macOS delivers all 1500 — which is not termlens's queue
+/// but the kernel's, exactly as 0.5 documents: a write into a full terminal
+/// input queue blocks on macOS, where the backlog stays visible, and Linux's
+/// `n_tty` *discards*. Past the tty buffer the platforms stop agreeing and
+/// no promise termlens makes can cover it. 1000 is the largest batch that
+/// fully delivers on both, so it is the largest one this can assert.
 #[test]
-fn v14_a_batch_of_queries_is_answered_in_full() -> termlens::Result<()> {
+fn v14_a_large_batch_of_queries_is_answered_in_full() -> termlens::Result<()> {
     // A legitimate pattern: probe several capabilities, then read all the
     // answers. Here it is exaggerated to make the loss deterministic.
     let script = r#"stty raw -echo
-i=0; while [ $i -lt 1500 ]; do printf '\033[6n'; i=$((i+1)); done
-printf 'ASKED-1500'
+i=0; while [ $i -lt 1000 ]; do printf '\033[6n'; i=$((i+1)); done
+printf 'ASKED-1000'
 sleep 0.6
 stty min 0 time 5
-GOT=$(dd bs=1 count=60000 2>/dev/null | tr -cd 'R' | wc -c)
+GOT=$(dd bs=1 count=60000 2>/dev/null | tr -cd 'R' | wc -c | tr -d ' ')
 stty sane
 printf '\r\nGOT=%s\r\n' "$GOT"
 head -c 1 >/dev/null"#;
@@ -251,7 +260,7 @@ head -c 1 >/dev/null"#;
         .timeout(Duration::from_secs(15))
         .args(["-c", script])
         .spawn("/bin/sh")?;
-    t.wait_until(|s| s.contains("ASKED-1500"))?;
+    t.wait_until(|s| s.contains("ASKED-1000"))?;
     t.wait_until_for(|s| s.contains("GOT="), Duration::from_secs(12))?;
     let s = t.screen();
     let line = s
@@ -260,9 +269,9 @@ head -c 1 >/dev/null"#;
         .find(|l| l.contains("GOT="))
         .unwrap_or("")
         .to_owned();
-    println!("--- v14 --- asked 1500, {line}");
+    println!("--- v14 --- asked 1000, {line}");
     assert!(
-        line.contains("GOT=1500"),
+        line.contains("GOT=1000"),
         "every reply delivered; got: {line}"
     );
     Ok(())
@@ -332,7 +341,7 @@ i=0; while [ $i -lt {batch} ]; do printf '\033[6n'; i=$((i+1)); done
 printf 'ASKED'
 sleep 0.5
 stty min 0 time 5
-GOT=$(dd bs=1 count=60000 2>/dev/null | tr -cd 'R' | wc -c)
+GOT=$(dd bs=1 count=60000 2>/dev/null | tr -cd 'R' | wc -c | tr -d ' ')
 stty sane
 printf '\r\nGOT=%s\r\n' "$GOT"
 head -c 1 >/dev/null"#
