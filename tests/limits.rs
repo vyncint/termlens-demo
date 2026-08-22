@@ -1,4 +1,4 @@
-//! What termlens **0.4** still cannot do, demonstrated against the real
+//! What termlens **0.6** still cannot do, demonstrated against the real
 //! binary rather than asserted from reading the source.
 //!
 //! Every test here passes and pins *current* behaviour, so closing one of
@@ -14,8 +14,18 @@
 //! count the frames, count the history rows, name the API.
 //!
 //! Four of the items below are therefore **bounds** rather than absences,
-//! which is what the replacements look like. For what 0.3 and 0.4 fixed, see
-//! `docs/TERMLENS-COVERAGE.md`.
+//! which is what the replacements look like.
+//!
+//! **It was broken again on the way to 0.6, in three more shapes**, and the
+//! shapes are the useful part: a pin that asserted the symptom and stayed
+//! true (the bell left no trace on the grid — still true, and now beside
+//! the point); a pin that only *printed* its measurement, so it could not
+//! fail when reply loss stopped; and a pin whose assertion was true for
+//! opposite reasons (a `DECRQM` timeout lacking a phrase, which held both
+//! when the query was unrecognised and once it was answered). See §10.1 of
+//! `docs/TERMLENS-COVERAGE.md`, where all three are named.
+//!
+//! For what 0.3 through 0.6 fixed, see `docs/TERMLENS-COVERAGE.md`.
 
 mod common;
 
@@ -121,7 +131,7 @@ fn a_snapshot_can_be_torn_even_for_a_synchronized_app() -> termlens::Result<()> 
         "the timeout should name the real state: {message}"
     );
 
-    t.send(Key::Enter);
+    t.send(Key::Enter)?;
     let whole = t.wait_frame(|s| s.contains("ROW-TWO"))?;
     assert!(whole.contains("ROW-ONE") && whole.contains("ROW-TWO"));
     Ok(())
@@ -164,14 +174,14 @@ fn wait_frame_is_useless_without_synchronized_updates() {
 #[test]
 fn esc_immediately_followed_by_a_key_is_still_read_as_alt() -> termlens::Result<()> {
     let mut merged = spawn();
-    merged.send(Key::Char('/'));
+    merged.send(Key::Char('/'))?;
     merged.wait_frame(|s| s.contains("FILTER"))?;
-    merged.paste("core");
-    merged.send(Key::Enter);
+    merged.paste("core")?;
+    merged.send(Key::Enter)?;
     merged.wait_frame(|s| s.contains("filter:core"))?;
 
     // `\x1b?` — byte-for-byte what Esc-then-'?' puts on the wire.
-    merged.send_str("\x1b?");
+    merged.send_str("\x1b?")?;
     merged.wait_frame(|s| s.contains("HELP"))?;
     assert!(
         merged.screen().contains("filter:core"),
@@ -181,15 +191,15 @@ fn esc_immediately_followed_by_a_key_is_still_read_as_alt() -> termlens::Result<
 
     // Separated by an observation, both land.
     let mut separated = spawn();
-    separated.send(Key::Char('/'));
+    separated.send(Key::Char('/'))?;
     separated.wait_frame(|s| s.contains("FILTER"))?;
-    separated.paste("core");
-    separated.send(Key::Enter);
+    separated.paste("core")?;
+    separated.send(Key::Enter)?;
     separated.wait_frame(|s| s.contains("filter:core"))?;
 
-    separated.send(Key::Esc);
+    separated.send(Key::Esc)?;
     separated.wait_frame(|s| !s.contains("filter:core"))?; // <- the fix
-    separated.send(Key::Char('?'));
+    separated.send(Key::Char('?'))?;
     separated.wait_frame(|s| s.contains("HELP"))?;
     Ok(())
 }
@@ -211,9 +221,12 @@ fn esc_immediately_followed_by_a_key_is_still_read_as_alt() -> termlens::Result<
 /// 0.3/0.4 answer DSR, DA1/DA2, text-area size, OSC 10/11 and **`DECRQM`** —
 /// the last of which is why a probe-then-enable application now works
 /// unmodified (`hard::a_probing_application_is_told_that_synchronized_output_works`).
+/// 0.5 added **`XTGETTCAP`**, the last of the common startup probes with no
+/// reply (`hard::all_six_startup_capability_probes_are_answered`).
+///
 /// A few are still recognised but unanswerable: the kitty keyboard protocol
-/// probe (`CSI ? u`), DA3, OSC 12 (cursor colour), `XTGETTCAP`, and `OSC 52`
-/// clipboard *reads*. An app that *blocks* on one of those still hangs.
+/// probe (`CSI ? u`), DA3, OSC 12 (cursor colour), and `OSC 52` clipboard
+/// *reads*. An app that *blocks* on one of those still hangs.
 ///
 /// What did change is the diagnosis: the timeout now names the query, so
 /// the cause is in the failure message instead of requiring a strace.
@@ -361,7 +374,7 @@ fn a_resize_does_not_reflow_scrollback() -> termlens::Result<()> {
 fn an_alternate_screen_app_has_no_scrollback() -> termlens::Result<()> {
     let mut t = spawn();
     for _ in 0..14 {
-        t.send(Key::Char('j'));
+        t.send(Key::Char('j'))?;
     }
     t.wait_until(|s| s.contains("Tasks 13/13"))?;
 
@@ -411,7 +424,7 @@ fn every_wait_takes_a_per_call_deadline() -> termlens::Result<()> {
     let frame = t.wait_frame_for(|s| s.contains("late frame"), Duration::from_secs(5))?;
     assert!(frame.contains("late frame"));
     t.wait_idle_for(Duration::from_millis(50), Duration::from_secs(5))?;
-    assert_eq!(t.wait_exit_for(Duration::from_secs(5))?.code(), 7);
+    assert_eq!(t.wait_exit_for(Duration::from_secs(5))?.code(), Some(7));
 
     // The builder value still applies when no override is given.
     let mut t = Terminal::builder()

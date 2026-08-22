@@ -639,3 +639,203 @@ open.
 
 Nothing on this list can produce a test that passes while proving nothing.
 After §7.1, that is the property worth naming.
+
+---
+
+# termlens 0.6 — three of five again, and three more ways a pin can lie
+
+Same subject, same suite, two releases later: 0.4.0 → 0.6.0. **150 tests, all
+passing**, up from 140. Read §1–2 for 0.2, §3–6 for 0.2.1, §7–9 for 0.4, then
+§10–12 for 0.6.
+
+The headline is the same shape as §7's and that is itself the finding: **three
+of the five items §9 ranked have shipped**, and the two that have not are the
+two that were smallest. But the more useful half of this pass is §10.1. Six
+tests in this suite went on passing while the claim in their name went false,
+in three shapes none of which §7.1 had seen. A study whose pins can go stale
+in six new ways every two releases is a study that has to be re-run, not
+re-read — which is the argument for the workflow in §12.
+
+## 10. What 0.5 and 0.6 changed
+
+### 10.1 Six pins that stayed green while their claim went false
+
+§7.1 found four, all of one shape: the pin asserted a *symptom* the closed gap
+still shares with its replacement. This pass found six, of three shapes.
+
+**Asserted the symptom** — the §7.1 shape, still the commonest.
+
+- `the_bell_on_rejected_input_is_unobservable` pinned "the screen is
+  byte-identical either way". It still is. 0.5 added `Screen::bells`, so the
+  complaint is observable without the grid changing at all — the pin's
+  evidence and the pin's claim were never the same thing. Now
+  `the_bell_on_rejected_input_is_counted_though_the_grid_is_untouched`,
+  asserting both halves together.
+- `focus_events_cannot_be_delivered_so_the_unfocused_view_is_unreachable`
+  asserted the *focused* styling and stopped. 0.5 added `focus_in`/`focus_out`,
+  so the unfocused branch is reachable — but nothing in the test ever tried to
+  reach it, so nothing failed. This was the worst of the six: the branch it
+  named had been unreachable in the strong sense that **the application's code
+  never ran, in any test, ever**. Now `the_unfocused_view_is_reachable_and_returns`,
+  which crosses the boundary in both directions.
+
+**Only printed.** A test with no assertion cannot fail, and two of the most
+important measurements in §4.2 had none.
+
+- `v14_batched_queries_lose_replies_silently` and `v18_where_reply_loss_begins`
+  measured reply delivery and printed the number. Under 0.2.1 those numbers
+  were 200 asked → 173 answered, 400 → 235, 1000 → 285. Under 0.6:
+
+  | asked | 50 | 200 | 400 | 600 | 1000 | 1500 |
+  |---|---|---|---|---|---|---|
+  | answered | 50 | 200 | 400 | 600 | 1000 | 1500 |
+
+  Nothing is lost, at any batch size measured. This was **§9's number-one
+  ranked item**, it shipped, and the two tests that existed to watch for it
+  reported the good news to a log nobody reads. Both assert now.
+
+**True for opposite reasons**, which is the shape §7.1 did not have.
+
+- `v17_decrqm_2026_probe_still_unrecognised` asserted that the timeout message
+  *lacked* the phrase "queried the terminal". That holds when the query is
+  unrecognised — and equally when it is answered, because the test read a
+  *line* and a `DECRQM` reply never terminates one. The test timed out either
+  way, and its assertion could not tell the two worlds apart. It now reads the
+  reply's own length: `GOT=[?2026;2$y`, mode 2026 reported as supported and
+  currently reset, which is the honest answer.
+- `v2_upper_bound_is_unchecked_and_snapshots_cost_area` accepted a 1500×1500
+  grid and timed the result. A later version caps each axis at 1000, so the
+  builder now refuses — and the refusal explains itself: *"a snapshot costs one
+  entry per cell, so a grid this large makes every wait slow enough to look
+  like a hang"*. The cost curve is kept, because it is why the cap is worth
+  having.
+
+The rule that survives all ten cases: **a pin must assert the mechanism it is
+named for, and it must be able to fail.** Symptoms are shared, prints are
+inert, and an absence proved by a timeout is proved by the weakest evidence
+there is.
+
+### 10.2 The unfocused branch, which had never run
+
+Worth separating from the list because it is a different kind of gain. Every
+other item here made an existing assertion sharper. This one made an entire
+branch of the subject *executable*: taskboard dims its status bar when the
+terminal reports lost focus, and before 0.5 no input existed that could enter
+that branch. Not "untested" — unreachable.
+
+`ESC[O` by hand was not an option either (§2.3): it is byte-identical to `Esc`
+followed by `O`, and crossterm reads it as a focus event only because a real
+terminal never types those keys that fast. The API had to express it, and now
+does — mode-aware like every other input, refused with a typed error when the
+application never enabled 1004.
+
+### 10.3 Inline graphics: the assertion no cell can carry
+
+0.6's headline, and the one surface in the crate where **nothing on screen
+changes**, which is exactly why it needed an API rather than a needle.
+`tests/survey_0_6_0.rs` is ten new probes against hand-written escapes —
+hand-written because the point is what termlens reports for a payload whose
+every byte is known.
+
+- **A transmission is counted as an image, not as an escape.** The protocol
+  caps a payload at 4096 bytes and continues with `m=1`, so any image of
+  consequence arrives in several escapes; counting escapes made one chart into
+  several pictures, and the continuations carry no control block, so nothing
+  could be said about those "pictures" either (`g2`).
+- **A delete is not a transmission.** `a=d` takes an image *off* the screen.
+  Folding it into the image count made an application that tears down what it
+  drew look like one that drew twice as much — opposite behaviours, same
+  number (`g3`).
+- **Placement is a fact about the grid.** `at()` reports the cell the image
+  landed on, which is the one thing about a picture that text layout can get
+  wrong: a chart that slides out from under its own labels leaves every cell
+  exactly as it was (`g4`, `g5`).
+- **What it depicted**, with the `decode` feature: kitty `f=32` plain and
+  zlib'd, and the sixel data stream, decode to pixels, so the claim is "*this*
+  image went out" rather than "an image of about the right size did" (`g9`).
+  Refusals name their reason instead of decoding a prefix of themselves into a
+  plausible wrong picture (`g10`).
+- **The negative assertion**, which is as often as not the one a suite wants:
+  this must render as text in every terminal and never go out as an image
+  (`g6`).
+
+The four counters discriminate: `g1` (kitty 1, sixel 0), `g8` (sixel 1, kitty
+0), `g6` (both 0) and `g3` (one image, one delete) cannot all pass under any
+constant answer — which, after §10.1, is a property worth checking rather than
+assuming.
+
+### 10.4 The two migration costs
+
+Both breaking, both in the direction of honesty, and between them they touched
+113 call sites in this suite.
+
+- **`send`, `send_str` and `paste` return `Result`.** §9 ranked this third.
+  The migration is one `?` per call site and nothing else — except where the
+  old panic *was* the test: `f2` and `f7` asserted that typing at a departed
+  child aborts, and now assert that it is refused by value.
+- **`ExitStatus::code` returns `Option<u32>`**, `None` when a signal killed the
+  child. Five sites, all of which had been asserting `== 0` or `== 130` on a
+  value that could not represent "died on a signal" at all.
+
+One silent behaviour change, which cost more to find than either migration:
+**`drag` reports one motion per cell crossed** rather than one motion for the
+gesture. `drag_modifiers_and_the_horizontal_wheel_are_encoded` reads a fixed
+80 bytes off the wire and the drag now spends 38 of them instead of 28, so the
+wheel event that followed fell outside the read and the test failed on a
+missing needle rather than on the thing that changed. The budget is 90 now, and
+the intermediate motion is asserted rather than merely accommodated.
+
+## 11. What is still a limitation
+
+`limits.rs` is thirteen tests, unchanged in count: four absences closed and
+four bounds took their place.
+
+- **The frame history is eight deep**, and a predicate true of two retained
+  frames resolves on the older.
+- **`screen()` can be torn** even for a correctly-synchronized application, and
+  the reasoning still holds: serving the newest complete frame would let a
+  `wait_until` predicate match content the following `screen()` does not show.
+- **Scrollback is bounded, unreflowed, and text only** — so a style regression
+  above the fold is still not assertable.
+- **`wait_frame` still needs the application to opt in.**
+- **A grid is capped at 1000 per axis** — new in this pass, and a bound rather
+  than an absence.
+- **Still unanswerable**: kitty `CSI ? u`, DA3, OSC 12, and `OSC 52` *reads*,
+  so copy-then-read-back still hangs. `XTGETTCAP` left this list in 0.5.
+- **Still open from §6**: the 222 guard fires before the encoding match, so
+  mode 1005 cannot reach the coordinates it exists for (`v8`).
+- **Still outside the model**: `OSC 8` targets, `DECSCUSR`, `OSC 4`
+  redefinition, trailing whitespace inside a padded pane. Unix only. `BEL`,
+  focus events and NFD/NFC matching left this list in 0.5.
+
+## 12. Ranking, revised again
+
+§9's list, scored:
+
+| # | item | status |
+|---|---|---|
+| 1 | Backpressure rather than drop | **shipped** in 0.5 — as *never drop*, which is stronger than what was asked |
+| 2 | Move the 222 guard inside the encoding match | open |
+| 3 | `send`/`paste`/`click` returning `Result` | **shipped** in 0.5 |
+| 4 | Focus events (mode 1004) | **shipped** in 0.5 |
+| 5 | Styles in scrollback | open |
+
+And the list as it stands now:
+
+1. **Move the 222 guard inside the encoding match** (§4.1) — two rankings
+   running as the smallest fix on the list, and still wrong in the direction of
+   refusing input the selected encoding can carry. Pinned by `v8`.
+2. **Styles in scrollback** (§8) — narrow, but exactly the class of application
+   scrollback was added for: a log view that colours by severity cannot be
+   asserted on above the fold.
+3. **A torn `screen()` has no opt-out.** The default is right and the reasoning
+   in §7.4 holds, but an application that brackets every repaint correctly has
+   no way to say "never hand me a half-painted grid" other than routing every
+   observation through `wait_frame`.
+4. **`OSC 52` clipboard reads**, the last query in the unanswerable list that a
+   real application blocks on rather than merely asks.
+5. **Styles in `rect_text`** — the pane-level counterpart to item 2.
+
+Nothing on this list can produce a test that passes while proving nothing.
+After §10.1 that is worth saying twice, because six tests in this suite did
+exactly that and every one of them looked fine in review.

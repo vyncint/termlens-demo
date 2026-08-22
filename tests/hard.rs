@@ -21,7 +21,7 @@ mod common;
 use std::time::Duration;
 
 use common::{spawn, spawn_args, spawn_sized};
-use termlens::{Color, Error, Key, Style};
+use termlens::{Color, Error, Key, Screen, Style};
 
 // ============================================================ the board tab
 
@@ -30,7 +30,7 @@ use termlens::{Color, Error, Key, Style};
 fn the_board_lays_out_three_lanes() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("todo (") && s.contains("doing (") && s.contains("done ("))?;
 
     let screen = t.screen();
@@ -45,20 +45,20 @@ fn the_board_lays_out_three_lanes() -> termlens::Result<()> {
 fn h_and_l_move_between_lanes() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("Board todo 1/8"))?;
 
-    t.send(Key::Char('l'));
+    t.send(Key::Char('l'))?;
     t.wait_frame(|s| s.contains("Board doing 1/2"))?;
 
-    t.send(Key::Char('l'));
+    t.send(Key::Char('l'))?;
     t.wait_frame(|s| s.contains("Board done 1/3"))?;
 
     // Clamped at the last lane.
-    t.send(Key::Char('l'));
+    t.send(Key::Char('l'))?;
     t.wait_frame(|s| s.contains("Board done 1/3"))?;
 
-    t.send(Key::Char('h'));
+    t.send(Key::Char('h'))?;
     t.wait_frame(|s| s.contains("Board doing 1/2"))?;
     Ok(())
 }
@@ -69,7 +69,7 @@ fn h_and_l_move_between_lanes() -> termlens::Result<()> {
 #[test]
 fn the_focused_lane_is_the_one_with_a_coloured_border() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("Board todo 1/8"))?;
 
     let screen = t.screen();
@@ -89,7 +89,7 @@ fn the_focused_lane_is_the_one_with_a_coloured_border() -> termlens::Result<()> 
 #[test]
 fn lane_width_truncates_titles_including_wide_glyphs() -> termlens::Result<()> {
     let mut t = spawn();
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("doing (2)"))?;
 
     let screen = t.screen();
@@ -122,7 +122,7 @@ fn lane_width_truncates_titles_including_wide_glyphs() -> termlens::Result<()> {
 fn a_progress_burst_is_observable_up_to_the_retention_bound() -> termlens::Result<()> {
     let mut t = spawn_args(&[], Duration::from_secs(5));
 
-    t.send(Key::Char('r'));
+    t.send(Key::Char('r'))?;
     // Settle on the live screen; `wait_until` reads the grid, not the frame
     // ring, so it consumes nothing.
     t.wait_until(|s| s.contains("finished Wire up the PTY reader"))?;
@@ -151,11 +151,11 @@ fn a_progress_burst_is_observable_up_to_the_retention_bound() -> termlens::Resul
 fn a_transient_toast_is_catchable_when_it_ends_the_burst() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('y'));
+    t.send(Key::Char('y'))?;
     t.wait_frame(|s| s.contains("· copied Wire up the PTY reader"))?;
 
     // And it is spent: the next key clears it.
-    t.send(Key::Char('j'));
+    t.send(Key::Char('j'))?;
     t.wait_frame(|s| s.contains("Tasks 2/13"))?;
     assert!(!t.screen().contains("· copied"), "{}", t.screen());
     Ok(())
@@ -171,11 +171,11 @@ fn the_window_title_follows_the_open_count() -> termlens::Result<()> {
     assert_eq!(t.screen().title(), "taskboard — 10 open");
 
     // Space toggles the first task (done -> open): one more open task.
-    t.send(Key::Char(' '));
+    t.send(Key::Char(' '))?;
     t.wait_frame(|s| s.contains("[ ] HIGH Wire up"))?;
     t.wait_until(|s| s.title() == "taskboard — 11 open")?;
 
-    t.send(Key::Char(' '));
+    t.send(Key::Char(' '))?;
     t.wait_until(|s| s.title() == "taskboard — 10 open")?;
     Ok(())
 }
@@ -257,10 +257,10 @@ fn a_concealed_field_is_marked_concealed() -> termlens::Result<()> {
     let mut t = spawn();
 
     // Select the task that carries a secret.
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
-    t.paste("secret");
-    t.send(Key::Enter);
+    t.paste("secret")?;
+    t.send(Key::Enter)?;
     let screen = t.wait_frame(|s| s.contains("tasks (1) filtered"))?;
 
     // Still in the grid, exactly as a real terminal holds it…
@@ -320,7 +320,7 @@ fn the_hyperlink_target_is_unobservable() -> termlens::Result<()> {
 fn the_clipboard_payload_is_observable() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('y'));
+    t.send(Key::Char('y'))?;
     let screen = t.wait_frame(|s| s.contains("· copied"))?;
 
     // Under 0.2 the toast was the only evidence, and this test asserted only
@@ -335,9 +335,9 @@ fn the_clipboard_payload_is_observable() -> termlens::Result<()> {
 
     // It tracks the selection, so it is the real payload rather than a
     // constant that happens to match.
-    t.send(Key::Char('j'));
+    t.send(Key::Char('j'))?;
     t.wait_frame(|s| s.contains("Tasks 2/13"))?;
-    t.send(Key::Char('y'));
+    t.send(Key::Char('y'))?;
     let screen = t.wait_frame(|s| s.contains("· copied Snapshot"))?;
     assert_eq!(
         screen.clipboard().and_then(|c| c.text()),
@@ -346,22 +346,38 @@ fn the_clipboard_payload_is_observable() -> termlens::Result<()> {
     Ok(())
 }
 
-/// A rejected key rings the bell. `BEL` never reaches the grid and has no
-/// accessor, so "the app complained" is untestable — the screen is
-/// byte-identical either way.
+/// A rejected key rings the bell. `BEL` never reaches the grid, so the
+/// screen stays byte-identical — which is precisely why "an invalid key
+/// does nothing" and "an invalid key is refused with a bell" used to be the
+/// same test. **0.5 counts bells**, so the two are now different claims
+/// about the same unchanged screen.
+///
+/// This test was green before that change and its claim was false anyway:
+/// it asserted the symptom (the grid is untouched) rather than the absence
+/// it was named for. Kept in the stronger form — both halves, together.
 #[test]
-fn the_bell_on_rejected_input_is_unobservable() -> termlens::Result<()> {
+fn the_bell_on_rejected_input_is_counted_though_the_grid_is_untouched() -> termlens::Result<()> {
     let mut t = spawn();
 
-    t.send(Key::Char('d'));
+    t.send(Key::Char('d'))?;
     t.wait_frame(|s| s.contains("CONFIRM"))?;
-    let before = t.screen().to_string();
+    let before = t.screen();
+    let rung_before = before.bells();
+    let text_before = before.to_string();
 
     // 'z' is not a valid answer to the modal: the app rings and redraws.
-    t.send(Key::Char('z'));
+    t.send(Key::Char('z'))?;
     t.wait_frame(|s| s.contains("CONFIRM"))?;
+    let after = t.screen();
 
-    assert_eq!(before, t.screen().to_string(), "the bell left no trace");
+    assert_eq!(text_before, after.to_string(), "the bell left no trace");
+    assert_eq!(
+        after.bells(),
+        rung_before + 1,
+        "and yet the complaint is observable: {} -> {}",
+        rung_before,
+        after.bells()
+    );
     Ok(())
 }
 
@@ -374,7 +390,7 @@ fn the_cursor_shape_change_is_unobservable() -> termlens::Result<()> {
     let (_, _, visible_before) = t.screen().cursor();
     assert!(!visible_before, "hidden in normal mode");
 
-    t.send(Key::Char('/'));
+    t.send(Key::Char('/'))?;
     t.wait_frame(|s| s.contains("FILTER"))?;
 
     let (row, col, visible) = t.screen().cursor();
@@ -396,7 +412,7 @@ fn a_palette_override_does_not_change_what_the_grid_reports() -> termlens::Resul
     let before = *t.screen().cell(row, col).unwrap().style();
     assert_eq!(before.fg, Color::Indexed(1));
 
-    t.send(Key::Char('T'));
+    t.send(Key::Char('T'))?;
     t.wait_frame(|s| s.contains("high contrast on"))?;
 
     let screen = t.screen();
@@ -416,22 +432,39 @@ fn a_palette_override_does_not_change_what_the_grid_reports() -> termlens::Resul
 // ======================================== unreachable: input the app wants
 
 /// The app dims its status bar when the terminal reports the window lost
-/// focus (mode 1004). There is no API to deliver a focus event, so the
-/// unfocused rendering is unreachable — the app is stuck in the focused
-/// branch for the whole life of the test.
+/// focus (mode 1004). Until 0.5 there was no API to deliver a focus event,
+/// so the unfocused rendering was not merely unasserted but **unreachable**:
+/// the branch never ran, in any test, ever.
+///
+/// The 0.4 version of this test asserted the focused styling and stopped —
+/// so it stayed green when the branch became reachable, proving nothing
+/// about the thing it was named for. This one crosses the boundary in both
+/// directions, which is the only shape that can fail if focus stops working.
 #[test]
-fn focus_events_cannot_be_delivered_so_the_unfocused_view_is_unreachable() -> termlens::Result<()> {
-    let t = spawn();
-    let screen = t.screen();
+fn the_unfocused_view_is_reachable_and_returns() -> termlens::Result<()> {
+    let mut t = spawn();
 
-    let (row, col) = screen.find("NORMAL").expect("mode badge");
-    let style = *screen.cell(row, col).unwrap().style();
-    assert_eq!(style.bg, Color::Indexed(4), "focused: blue background");
-    assert!(!style.dim);
-    // Sending `ESC[O` by hand is not an option either: it is indistinguish-
-    // able from Esc followed by 'O' (§2.3), and crossterm reads it as the
-    // focus event only because a real terminal never types those keys that
-    // fast. Nothing in the API expresses "the window lost focus".
+    let badge = |s: &Screen| -> Style {
+        let (row, col) = s.find("NORMAL").expect("mode badge");
+        *s.cell(row, col).unwrap().style()
+    };
+
+    let opening = t.screen();
+    assert!(
+        opening.focus_events(),
+        "the app asked for mode 1004, which is what makes the rest deliverable"
+    );
+    let focused = badge(&opening);
+    assert_eq!(focused.bg, Color::Indexed(4), "focused: blue background");
+    assert!(!focused.dim);
+
+    t.focus_out()?;
+    let unfocused = t.wait_frame(|s| badge(s).dim)?;
+    assert!(badge(&unfocused).dim, "the branch that never used to run");
+
+    t.focus_in()?;
+    let refocused = t.wait_frame(|s| !badge(s).dim)?;
+    assert_eq!(badge(&refocused).bg, Color::Indexed(4), "and back again");
     Ok(())
 }
 
@@ -458,9 +491,9 @@ fn a_probing_application_is_told_that_synchronized_output_works() -> termlens::R
     let mut t = spawn_args(&["--probe-sync"], Duration::from_secs(5));
 
     // What the application concluded from the answer it got.
-    t.send(Key::Tab);
-    t.send(Key::Tab);
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
     t.wait_until(|s| s.contains("logs (41)"))?;
     let screen = t.screen();
     assert!(
@@ -470,7 +503,7 @@ fn a_probing_application_is_told_that_synchronized_output_works() -> termlens::R
 
     // And because it believed the answer, it brackets its repaints — so the
     // frame path works, on a binary that was never modified for the harness.
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     let frame = t.wait_frame(|s| s.contains("tasks (13)"))?;
     assert!(frame.contains("NORMAL"), "a complete frame:\n{frame}");
     Ok(())
@@ -481,26 +514,28 @@ fn a_probing_application_is_told_that_synchronized_output_works() -> termlens::R
 #[test]
 fn without_the_probe_the_same_binary_is_frame_testable() -> termlens::Result<()> {
     let mut t = spawn_args(&[], Duration::from_millis(600));
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
     t.wait_frame(|s| s.contains("todo (8)"))?;
     Ok(())
 }
 
-/// The batch of six startup probes: termlens answers DA1, DA2, DSR and both
-/// OSC colour queries, and does not answer XTGETTCAP.
+/// The batch of six startup probes: termlens answers DA1, DA2, DSR, both
+/// OSC colour queries — and, since 0.5, `XTGETTCAP`, which had been the last
+/// common startup probe with no reply. An application that asks all six and
+/// waits for all six now starts unmodified.
 #[test]
-fn five_of_six_startup_capability_probes_are_answered() -> termlens::Result<()> {
+fn all_six_startup_capability_probes_are_answered() -> termlens::Result<()> {
     let mut t = spawn_args(&["--probe-caps"], Duration::from_secs(3));
 
-    t.send(Key::Tab);
-    t.send(Key::Tab);
-    t.send(Key::Tab);
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
+    t.send(Key::Tab)?;
     t.wait_until(|s| s.contains("capability probes:"))?;
 
     let screen = t.screen();
     assert!(
-        screen.contains("capability probes: 5/6"),
-        "XTGETTCAP is the one that goes unanswered:\n{screen}"
+        screen.contains("capability probes: 6/6"),
+        "XTGETTCAP was the one that used to go unanswered:\n{screen}"
     );
     Ok(())
 }
@@ -508,20 +543,30 @@ fn five_of_six_startup_capability_probes_are_answered() -> termlens::Result<()> 
 // =========================================== text fidelity, in the real app
 
 /// The credentials task carries a decomposed 'é'. It renders identically to
-/// the precomposed form and compares differently, so the obvious needle
-/// misses — in an application, not a contrived `printf`.
+/// the precomposed form and used to compare differently, so the obvious
+/// needle missed — in an application, not a contrived `printf`.
+///
+/// **0.5 folds both sides to NFC**, which is the fix that matters for a
+/// human writing the test: the author types what their editor produces,
+/// and the application holds whatever its data source handed it. Neither
+/// form is privileged now, and both land on the same cell.
 #[test]
-fn the_nfd_title_does_not_match_an_nfc_needle() -> termlens::Result<()> {
+fn either_normalization_of_the_title_matches() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
     assert!(
-        !screen.contains("café credentials"),
-        "the needle a test author would type misses:\n{screen}"
+        screen.contains("café credentials"),
+        "the precomposed needle a test author would type:\n{screen}"
     );
     assert!(
         screen.contains("cafe\u{301} credentials"),
-        "only the decomposed form matches"
+        "and the decomposed form the application actually holds"
+    );
+    assert_eq!(
+        screen.find("café credentials"),
+        screen.find("cafe\u{301} credentials"),
+        "the same cell, whichever form is asked for"
     );
     Ok(())
 }
