@@ -20,10 +20,11 @@ name: latest
 # once per run, so a weekly cadence does not become a weekly duplicate.
 
 on:
-  schedule:
-    # Offset from the hour: :00 is the most contended slot on GitHub's
-    # scheduler, and a delayed check is a check that reports late.
-    - cron: "17 5 * * *"
+  # Scheduled runs are disabled. Uncomment the block below to restore them.
+  # schedule:
+  #   # Offset from the hour: :00 is the most contended slot on GitHub's
+  #   # scheduler, and a delayed check is a check that reports late.
+  #   - cron: "17 5 * * *"
   workflow_dispatch:
     inputs:
       version:
