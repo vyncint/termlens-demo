@@ -537,6 +537,7 @@ checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
 dependencies = [
  "console",
  "once_cell",
+ "serde",
  "similar",
  "tempfile",
 ]
@@ -1253,6 +1254,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json"
+version = "1.0.151"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
+]
+
+[[package]]
 name = "serial2"
 version = "0.2.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1470,16 +1484,20 @@ dependencies = [
 
 [[package]]
 name = "termlens"
-version = "0.6.1"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b76566a0782145bfc8034bfb806beda713e750f6f902d74eb6a83d6bc4a52675"
+checksum = "c01f5cc1f410aa421987ca194b72620037422bddcfeb15b1f8da40e52b03b348"
 dependencies = [
  "insta",
  "libc",
  "miniz_oxide",
  "portable-pty",
+ "regex",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "unicode-normalization",
+ "unicode-width",
  "vt100",
 ]
 
@@ -1488,8 +1506,11 @@ name = "termlens-demo"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "insta",
  "libc",
  "ratatui",
+ "regex",
+ "serde_json",
  "signal-hook 0.4.4",
  "termlens",
 ]
@@ -1899,3 +1920,9 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"

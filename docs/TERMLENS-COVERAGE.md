@@ -864,3 +864,156 @@ And the list as it stands now:
 Nothing on this list can produce a test that passes while proving nothing.
 After §10.1 that is worth saying twice, because six tests in this suite did
 exactly that and every one of them looked fine in review.
+
+---
+
+## 13. What 0.7 through 0.10.1 changed
+
+This repository sat on 0.6.1 while four minor versions shipped. The upgrade
+was done in one step to 0.10.1, and the interesting part is not the new
+surface — it is what the jump did to a suite of 150 tests that were all
+passing.
+
+**176 tests, all passing.** `tests/survey_0_10.rs` (25) is the new coverage;
+the rest is the existing suite, four tests of which had to be rewritten and
+two of which were pinning something that had not been true for a while.
+
+### 13.1 What broke, and why that is the point
+
+Eight failures: four at compile time, four at run time. Every one traces to a
+change termlens documented.
+
+| Broke | Since | What moved |
+|---|---|---|
+| `Style { dim: true, ..base }` (4 sites) | 0.10 | `Style` is `#[non_exhaustive]`; a consumer can no longer write a struct literal, which is what lets attributes be added without a major bump |
+| `t.drag(button, (1,1), (3,3))` | 0.10 | four column-first arguments instead of two pairs, so a transposed `find` result cannot be passed by mistake |
+| `assert_screen_snapshot!(screen)` (5 sites) | 0.10 | the macro takes a snapshot *source* — a `&Screen`, or a `&mut Terminal` it settles for you — records styles by default, and propagates with `?` |
+| `v1`, `v2`: `matches!(err, Error::Input(_))` | 0.8 | an invalid geometry got its own `Error::Size`; 0.9 then raised the floor from 1x1 to 2x2 |
+| `v7`, `v8`: mouse probes at 80 columns | 0.8 | an off-grid coordinate is refused *before* the encoding is consulted, so probing what an encoding can carry now needs a terminal wide enough to hold the column |
+
+The last row is the one worth dwelling on. `v7` and `v8` are both still true —
+column 100 goes out as two UTF-8 bytes under mode 1005, and column 300 is
+still refused with a message naming the *legacy* encoding for an application
+that selected UTF-8. They failed only because a guard added two versions
+later ran first. A test that fails for a new reason while its finding is
+intact is the cheapest kind of upgrade breakage and the easiest to
+misdiagnose as a fixed bug: both now spawn at 400 columns and say so.
+
+### 13.2 Two pins had gone stale
+
+The failures above announced themselves. These did not — they kept passing.
+
+**`the_hyperlink_target_is_unobservable` had been false since 0.7**, four
+minor versions. It asserted the `OSC 8` target was "nowhere — not in the
+text, not in the title, not in any accessor", and went on passing because it
+only ever checked the grid and the title. `Screen::links` reports exactly
+what it said was unreachable:
+
+```text
+uri="https://example.invalid/rfc/pty-reader" label=Some("open ref") closed=true
+```
+
+This is shape 1 from §10.1 — *a pin that asserts a symptom the closed gap
+still shares*. The label is on the grid and the URL is not, which was true
+before 0.7 and is true now; the accessor beside the grid is what changed. The
+test now asserts what is reported **and** what is still outside the model: no
+`Cell` carries its link, so which cells sit inside a span remains
+unassertable.
+
+**`scrolled_off_rows_keep_their_text_but_lose_their_styles` was narrowed by
+0.10** from a limitation to a default. `scrollback_styles(true)` retains the
+cells, so the masked-password assertion survives a scroll. The pin still
+holds for the default and now says so in its name, with a companion asserting
+the knob — so neither half can rot unnoticed again.
+
+### 13.3 The new surface, measured
+
+| Group | What was reproduced |
+|---|---|
+| **Search** | `find_all` returns all thirteen task markers in reading order, `find` is its first; `locate` names the region; a soft-wrapped line is two rows to `contains` and one line to `logical_text`, with `row_wrapped` reporting where the backend wrapped |
+| **`regex`** | a pattern matches a *row* and reports real columns (`tasks (13)` lands on the same cell `find` does); `wait_until_matches` is the expect-style wait, on the grid |
+| **Masks** | by rectangle, literal, predicate and pattern; a masked screen keeps its size, cursor and every style, and a wide character under a mask becomes two fill cells so nothing after it moves |
+| **`diff`** | a keypress changes three rows and the rendering names both sides; a screen diffs empty against itself |
+| **Renderings** | `to_ansi` stripped of SGR is exactly the rows the screen holds; `to_svg` and `to_html` carry the text |
+| **`serde`** | a `Screen` round-trips through JSON with its styles, and diffs empty against the original |
+| **`Screen::parse`** | `with_styles()` output round-trips byte-for-byte; five malformed inputs are errors rather than unwinds |
+| **Recording** | frames in order with timestamps; the budget drops the oldest and says how many; the asciicast payload paints the bottom row and does *not* end in a linefeed |
+| **Snapshot macro** | `assert_screen_snapshot!(t, after = …)` waits, settles and records styles in one line |
+| **0.7–0.9 catch-up** | `bin!`, `snapshot_after`, `wait_stable`, `mouse_modes`, `cursor_shape`/`cursor_blink`, `Screen: PartialEq`, `envs` |
+
+Two of those needed a second attempt, and both taught something.
+
+`to_ansi` was first checked by replaying it into a second PTY. That measures
+the kernel, not the rendering: a 90x26 repaint is tens of kilobytes and the
+tty input queue holds about four, which the README says plainly. It is now a
+pure comparison against the rows the screen holds.
+
+The mask test first asserted `row_text().len()` was unchanged. That is
+**bytes**: one CJK glyph is three of them and its two fill cells are two, so
+the assertion failed on a mask that had done exactly the right thing. The
+invariant is columns, and it is now asserted as columns — the text after the
+mask is still at the same coordinates.
+
+### 13.4 A new finding: `unsupported()` reports what the shadow implements
+
+`Screen::unsupported()` is 0.10's honesty accessor — every sequence the
+emulator did not implement, so a plausible-looking grid can be told from a
+right one. Against taskboard it reports:
+
+```text
+["^[[9m", "^[[29m", "^[[5m", "^[[25m", "^[[59m"]
+```
+
+On the same screen, in the same instant, `Style::blink` is `true` for the
+overdue badge and `hard.rs` has asserted the struck-through done titles since
+0.4. Those four SGR parameters are precisely the ones `emu/shadow.rs` exists
+to recover: vt100 drops them, the second parser puts them on the cell anyway,
+and the record reports the *backend's* gap rather than the emulator's.
+
+The consequence is the one the accessor was added to prevent, inverted. A
+user who checks `unsupported()` before trusting a blink or masked-field
+assertion is told the sequence was dropped, and concludes a correct assertion
+is unreliable. It also makes `assert!(screen.unsupported().is_empty())` —
+the natural "did my application emit anything this harness cannot see?" check
+— unwritable for any application that uses either attribute.
+
+`^[[59m` (underline colour) in the same list is correct; nothing models it.
+
+Reported as [termlens#320](https://github.com/vyncint/termlens/issues/320),
+and pinned by `survey_0_10::unsupported_reports_sequences_the_shadow_parser_does_implement`,
+whose failure message says what to do when the defect is fixed.
+
+## 14. Ranking, revised again
+
+§12 ranked five items. One shipped:
+
+| §12 item | 0.10.1 |
+|---|---|
+| 1. Move the 222 guard inside the encoding match | open — and now behind a second guard (§13.1) |
+| 2. Styles in scrollback | **shipped** in 0.10, as an opt-in knob with its cost measured |
+| 3. A torn `screen()` has no opt-out | open |
+| 4. `OSC 52` clipboard reads | open |
+| 5. Styles in `rect_text` | open |
+
+And the list as it stands:
+
+1. **`unsupported()` names sequences the emulator implements** (§13.4) — new,
+   and first because it is the only item that makes a *correct* assertion look
+   unreliable. Everything else on this list is a gap you can see; this one
+   mis-describes a capability that works.
+2. **Move the 222 guard inside the encoding match** — three rankings running
+   as the smallest fix on the list. Still refusing input the selected encoding
+   can carry.
+3. **A torn `screen()` has no opt-out.** The default is right and the
+   reasoning in §7.4 holds, but an application that brackets every repaint has
+   no way to say "never hand me a half-painted grid".
+4. **`OSC 52` clipboard reads**, the last query a real application blocks on
+   rather than merely asks.
+5. **Styles in `rect_text`** — the pane-level counterpart to what 0.10 shipped
+   for scrollback. `mask_rect` returns a `Screen`, so a styled *region* is now
+   expressible by masking everything else; a direct accessor is still absent.
+
+Two pins in this suite had gone stale for four minor versions and kept
+passing (§13.2). After §10.1 that is the second time this study has had to
+say it, which is itself the finding: a green suite is evidence that nothing
+*regressed*, and no evidence at all that what it claims is still the truth.

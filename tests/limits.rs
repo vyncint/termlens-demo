@@ -302,10 +302,13 @@ fn scrollback_is_bounded_and_drops_its_oldest_rows() -> termlens::Result<()> {
     Ok(())
 }
 
-/// History is **text only**: a scrolled-off row has no `Style` and no cell
-/// addressing, so a style regression above the fold is not assertable.
+/// **Narrowed by 0.10 from a limitation to a default.** History was text
+/// only, full stop; `TerminalBuilder::scrollback_styles(true)` now retains
+/// the cells too, so the masked-password assertion survives a scroll. The
+/// pin still holds for the *default*, which is what this asserts — and the
+/// companion below asserts the knob, so neither half can rot unnoticed.
 #[test]
-fn scrolled_off_rows_keep_their_text_but_lose_their_styles() -> termlens::Result<()> {
+fn scrolled_off_rows_lose_their_styles_unless_asked_to_keep_them() -> termlens::Result<()> {
     let mut t = Terminal::builder()
         .size(40, 3)
         .env_clear()
@@ -334,6 +337,62 @@ fn scrolled_off_rows_keep_their_text_but_lose_their_styles() -> termlens::Result
         "and no span describes it:\n{}",
         screen.with_styles()
     );
+    // The addressing half is gone too, by default.
+    assert!(
+        screen.scrollback_cell(0, 0).is_none(),
+        "no cell addressing into history without the knob"
+    );
+    Ok(())
+}
+
+/// The other half of the same decision: ask, and the styles come along.
+/// Off by default because the cost lands where a suite feels it — about
+/// 90ms against 40ms for 20,000 lines, per the knob's own rustdoc.
+#[test]
+fn scrollback_styles_retains_the_cells_a_scroll_would_have_dropped() -> termlens::Result<()> {
+    let mut t = Terminal::builder()
+        .size(40, 3)
+        .env_clear()
+        .scrollback(50)
+        .scrollback_styles(true)
+        .timeout(Duration::from_secs(5))
+        .args([
+            "-c",
+            r"printf '\033[1;31mSTYLED-AWAY\033[0m\n'; printf 'a\nb\nc\nd\n'; read x",
+        ])
+        .spawn("/bin/sh")?;
+
+    t.wait_until(|s| s.scrollback_text().contains("STYLED-AWAY"))?;
+    let screen = t.screen();
+    assert!(!screen.contains("STYLED-AWAY"), "it is off the grid");
+
+    // The row is retained as cells, so the style that scrolled away is still
+    // readable — and `locate` says which region holds it.
+    assert!(
+        screen.styled_scrollback(),
+        "the screen reports that history carries styles"
+    );
+    let cell = screen
+        .scrollback_cell(0, 0)
+        .expect("the first retained row is addressable");
+    assert_eq!(cell.contents(), "S");
+    assert!(
+        cell.style().bold,
+        "bold survived the scroll: {:?}",
+        cell.style()
+    );
+    assert_eq!(
+        cell.style().fg,
+        termlens::Color::Indexed(1),
+        "and the colour"
+    );
+
+    match screen.locate("STYLED-AWAY") {
+        Some(termlens::Location::History { row, col }) => {
+            println!("--- located in history at row {row}, col {col}");
+        }
+        other => panic!("expected a history location, got {other:?}"),
+    }
     Ok(())
 }
 

@@ -59,17 +59,11 @@ fn a1_strikethrough_and_blink_are_in_the_style_model() -> termlens::Result<()> {
     // Each is exactly one attribute, not a smear across the others.
     assert_eq!(
         style_of(&s, "STRIKE"),
-        Style {
-            strikethrough: true,
-            ..Style::default()
-        }
+        common::style(|style| style.strikethrough = true)
     );
     assert_eq!(
         style_of(&s, "BLINK"),
-        Style {
-            blink: true,
-            ..Style::default()
-        }
+        common::style(|style| style.blink = true)
     );
 
     // And therefore visible in a styled snapshot, which is where a style

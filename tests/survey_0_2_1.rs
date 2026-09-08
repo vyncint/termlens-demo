@@ -21,21 +21,39 @@ fn raw(script: &str) -> Terminal {
 
 // =================================================== 1. builder validation
 
+/// **Moved twice since 0.2.1.** The rejection was `Error::Input` when this
+/// was written; 0.8 gave an invalid geometry its own `Error::Size` variant,
+/// and 0.9 raised the floor from 1x1 to 2x2 — one column panicked the
+/// emulator on a double-width character and one row on a line that wrapped,
+/// on the reader thread where the panic propagated nowhere. The claim being
+/// pinned is unchanged (a bad size is refused before anything is spawned);
+/// only the variant and the boundary moved, so this asserts the mechanism
+/// rather than the 0.2.1 spelling of it.
 #[test]
-fn v1_zero_dimensions_are_rejected_at_spawn_and_resize() -> termlens::Result<()> {
-    for (cols, rows) in [(0u16, 24u16), (80, 0), (0, 0)] {
+fn v1_impossible_dimensions_are_rejected_at_spawn_and_resize() -> termlens::Result<()> {
+    for (cols, rows) in [(0u16, 24u16), (80, 0), (0, 0), (1, 24), (80, 1)] {
         let err = Terminal::builder()
             .size(cols, rows)
             .args(["-c", "true"])
             .spawn("/bin/sh")
-            .expect_err("zero must be rejected");
-        assert!(matches!(err, Error::Input(_)), "{err:?}");
+            .expect_err("an impossible size must be rejected");
+        assert!(matches!(err, Error::Size(_)), "{err:?}");
         println!("--- v1 --- {cols}x{rows}: {err}");
     }
+    // 2x2 is the smallest terminal that works, and it does work.
+    let smallest = Terminal::builder()
+        .size(2, 2)
+        .args(["-c", "true"])
+        .spawn("/bin/sh");
+    assert!(
+        smallest.is_ok(),
+        "2x2 is the documented floor: {smallest:?}"
+    );
+
     let mut t = raw("printf 'ALIVE'");
     t.wait_until(|s| s.contains("ALIVE"))?;
     let err = t.resize(0, 10).expect_err("resize zero rejected");
-    assert!(matches!(err, Error::Input(_)), "{err:?}");
+    assert!(matches!(err, Error::Size(_)), "{err:?}");
     // and the terminal is untouched by the rejected resize
     assert_eq!(t.screen().size(), (80, 24));
     Ok(())
@@ -77,7 +95,8 @@ fn v2_upper_bound_is_checked_and_snapshots_cost_area() -> termlens::Result<()> {
         .args(["-c", "true"])
         .spawn("/bin/sh")
         .expect_err("1500 is past the per-axis limit");
-    assert!(matches!(refused, Error::Input(_)), "{refused:?}");
+    // `Error::Input` until 0.8, which gave geometry its own variant.
+    assert!(matches!(refused, Error::Size(_)), "{refused:?}");
     println!("--- v2 --- 1500x1500 refused: {refused}");
     Ok(())
 }
@@ -141,10 +160,20 @@ fn v6_paste_without_bracketed_mode_also_rewrites_newlines() -> termlens::Result<
 
 // ==================================================== 3. mouse encodings
 
+/// **Still true, but no longer reachable at 80 columns.** 0.8 began refusing
+/// a mouse coordinate outside the grid, and that guard runs *before* the
+/// encoding is consulted — so probing what an encoding can carry now needs a
+/// terminal wide enough to hold the column. At 400 columns the claim
+/// reproduces exactly as it did in 0.2.1: column 100 goes out as two UTF-8
+/// bytes (`c2 85`) rather than the bare `0x85` the legacy encoding would put
+/// on the wire.
 #[test]
 fn v7_utf8_mouse_encoding_is_used_when_the_app_asks_for_1005() -> termlens::Result<()> {
-    let mut t = raw(
-        r"printf '\033[?1000h\033[?1005hCLICK='; od -An -tx1 -N6 | tr -d '\n'; printf '\r\nDONE\r\n'",
+    let mut t = common::spawn_sh_sized(
+        r"stty raw -echo; printf '\033[?1000h\033[?1005hCLICK='; od -An -tx1 -N6 | tr -d '\n'; printf '\r\nDONE\r\n'; head -c 1 >/dev/null",
+        Duration::from_secs(3),
+        400,
+        24,
     );
     t.wait_until(|s| s.contains("CLICK="))?;
     t.click(100, 3)?; // legacy would put a bare 0x85 on the wire
@@ -153,9 +182,20 @@ fn v7_utf8_mouse_encoding_is_used_when_the_app_asks_for_1005() -> termlens::Resu
     Ok(())
 }
 
+/// **Still true, and now behind a second guard.** Since 0.8 an off-grid
+/// coordinate is refused first, so this needs a terminal that can hold
+/// column 300 before the encoding limit is even consulted. Once it is, the
+/// 0.2.1 finding stands unchanged: mode 1005 exists to carry coordinates
+/// past the legacy limit (xterm reaches ~2015) and termlens still stops at
+/// 222, naming the legacy encoding for an application that selected UTF-8.
 #[test]
 fn v8_utf8_mouse_still_refuses_past_222_and_blames_the_wrong_encoding() -> termlens::Result<()> {
-    let mut t = raw(r"printf '\033[?1000h\033[?1005hREADY'");
+    let mut t = common::spawn_sh_sized(
+        r"stty raw -echo; printf '\033[?1000h\033[?1005hREADY'; head -c 1 >/dev/null",
+        Duration::from_secs(3),
+        400,
+        24,
+    );
     t.wait_until(|s| s.contains("READY"))?;
     // Mode 1005 exists precisely to carry coordinates past the legacy
     // limit (xterm goes to ~2015), but the guard runs before the encoding

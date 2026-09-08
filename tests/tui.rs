@@ -385,7 +385,9 @@ fn drag_modifiers_and_the_horizontal_wheel_are_encoded() -> termlens::Result<()>
     t.click_with(MouseButton::Left.ctrl(), 10, 4)?; // button 0 + 16 = 22
     // One motion per cell crossed since 0.5, not one for the whole gesture:
     // press, two motions, release = 38.
-    t.drag(MouseButton::Left, (1, 1), (3, 3))?;
+    // 0.10 spread the two coordinate pairs into four column-first
+    // arguments, so a transposed `find` result cannot be passed by mistake.
+    t.drag(MouseButton::Left, 1, 1, 3, 3)?;
     t.scroll(0, 0, Scroll::Left)?; // button 66 = 10 (90 in total)
 
     t.wait_until(|s| s.text().matches('|').count() == 2)?;
@@ -719,17 +721,25 @@ fn a_single_slow_wait_can_have_its_own_timeout() -> termlens::Result<()> {
 // returns on is by construction complete.
 
 #[test]
-fn snapshot_initial_view() {
+fn snapshot_initial_view() -> termlens::Result<()> {
     let t = spawn();
-    termlens::assert_screen_snapshot!(t.screen());
+    // 0.10 rebuilt this macro: it takes a snapshot *source* (a `&Screen`, or
+    // a `&mut Terminal` it will settle for you), records styles by default,
+    // and propagates with `?`. `styles = false` keeps the plain grid this
+    // snapshot has recorded since 0.2.
+    termlens::assert_screen_snapshot!(&t.screen(), styles = false);
+    Ok(())
 }
 
 /// The styled snapshot catches what a text snapshot cannot — move the
 /// highlight and this diff changes. New in 0.2.
 #[test]
-fn snapshot_initial_view_with_styles() {
+fn snapshot_initial_view_with_styles() -> termlens::Result<()> {
     let t = spawn();
-    termlens::assert_screen_snapshot!(t.screen().with_styles());
+    // Was `assert_screen_snapshot!(screen.with_styles())`; styles are now a
+    // parameter of the macro rather than a different value handed to it.
+    termlens::assert_screen_snapshot!(&t.screen(), styles = true);
+    Ok(())
 }
 
 #[test]
@@ -737,7 +747,7 @@ fn snapshot_help_overlay() -> termlens::Result<()> {
     let mut t = spawn();
     t.send(Key::Char('?'))?;
     t.wait_frame(|s| s.contains("move cursor"))?;
-    termlens::assert_screen_snapshot!(t.screen());
+    termlens::assert_screen_snapshot!(&t.screen(), styles = false);
     Ok(())
 }
 
@@ -751,12 +761,13 @@ fn snapshot_filtered_with_confirm_dialog() -> termlens::Result<()> {
     t.wait_frame(|s| s.contains("filter:core"))?;
     t.send(Key::Char('d'))?;
     t.wait_frame(|s| s.contains("CONFIRM"))?;
-    termlens::assert_screen_snapshot!(t.screen());
+    termlens::assert_screen_snapshot!(&t.screen(), styles = false);
     Ok(())
 }
 
 #[test]
-fn snapshot_narrow_layout() {
+fn snapshot_narrow_layout() -> termlens::Result<()> {
     let t = spawn_sized(46, 16);
-    termlens::assert_screen_snapshot!(t.screen());
+    termlens::assert_screen_snapshot!(&t.screen(), styles = false);
+    Ok(())
 }
