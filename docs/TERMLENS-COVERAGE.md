@@ -1008,6 +1008,56 @@ before a version bump merges. The fix is one line — `cat >/dev/null` instead
 of `head -c 1` — and the finding is that a green suite on one OS is a claim
 about one OS.
 
+### 13.6 The tool and the skill, not just the library
+
+Three things ship in a termlens release and only one of them was under test
+here: the crate. Added:
+
+**`termlens-cli`, installed from crates.io** at the version the lockfile
+names, so the tool and the library are one release — the test asserts that
+first, because everything after it would otherwise be measuring two
+versions. It is pointed at the `.snap` files *this suite committed*, which
+are the honest input: insta wrote them, from taskboard, and they carry the
+`---` metadata header a real snapshot has. `render` reads them, `diff`
+returns 0 / 1 / 2 for same / differ / could-not-run, and `inspect` drives
+taskboard itself.
+
+The test worth having is the last one. `Command` can check exit codes and
+piped output, and that is all most CLI suites ever check — but a terminal
+tool's interesting behaviour is what it does *on a terminal*. `termlens diff`
+colours the changed cells when stdout is a TTY and stays plain in a pipe, and
+only a PTY harness can see both halves. So the same binary is run twice: once
+through `Command` (plain, no `\x1b` anywhere) and once through termlens, where
+the red and green are read off the rendered cells. That is this repository
+testing the tool with the tool.
+
+**The skill.** `skills/termlens/SKILL.md` is what an agent copies from, and
+termlens checks it with `check-skill-snippets.sh`, which compiles every Rust
+block against a stub whose `main` is `fn main() {}`. Compiling proves the API
+exists; it cannot prove the advice is true, because the stub draws nothing.
+Rule 8's claim about synchronized updates, rule 11's list of what survives
+`env_clear`, rule 6's two coordinate orders and rule 12's Unicode rules are
+all claims about a *running* program, and this repository has one.
+
+All ten hold. Rule 11 is the one worth having measured rather than trusted —
+it names exactly two variables that survive `env_clear`, and it is the claim
+most likely to go quietly wrong after a release touching the PTY layer. Rule
+8 is pinned from the side its reader is warned about: the skill says stock
+ratatui with crossterm does not emit DEC 2026, and taskboard is the other
+case, so the *conditional* is what gets asserted.
+
+One recipe could not be exercised and is recorded rather than skipped:
+Recipe A snapshots a hermetic CLI's `--help`, and taskboard has no `--help`.
+The mechanism it teaches — wait for the last thing printed *before* waiting
+for exit, so a fast program cannot lose its tail to PTY teardown — is
+asserted against the closest thing this subject has.
+
+**`TERMLENS_ARTIFACT_DIR`.** A failing wait writes the screen it embedded to
+a directory, and the test asserts it is the *same* screen the error carried
+rather than a re-read of a terminal that has moved on. It lives in its own
+test binary: the variable is process-wide, and setting it is `unsafe` under
+edition 2024 — sound only because that binary runs one test.
+
 ## 14. Ranking, revised again
 
 §12 ranked five items. One shipped:
