@@ -780,7 +780,16 @@ fn f5_no_reflow_on_narrowing() -> termlens::Result<()> {
 
 #[test]
 fn g1_click_takes_col_row_while_find_returns_row_col() -> termlens::Result<()> {
-    let mut t = raw(r"printf '\033[?1000h\033[?1006h\033[3;20HTARGET'");
+    // `cat`, not the shared `raw()` helper's `head -c 1`: this test sends two
+    // full SGR mouse sequences, and a child that lives for exactly one byte
+    // is gone before the second. Linux won that race and macOS lost it with
+    // `Error::Write` (EIO on the master) — a latent bug in the test, surfaced
+    // by running the deep suite on both platforms rather than by anything
+    // termlens changed.
+    let mut t = spawn_sh(
+        r"stty raw -echo; printf '\033[?1000h\033[?1006h\033[3;20HTARGET'; cat >/dev/null",
+        Duration::from_secs(2),
+    );
     t.wait_until(|s| s.contains("TARGET"))?;
     let (row, col) = t.screen().find("TARGET").unwrap();
     println!("find -> (row={row}, col={col})");

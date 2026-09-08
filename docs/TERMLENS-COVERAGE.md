@@ -983,6 +983,24 @@ Reported as [termlens#320](https://github.com/vyncint/termlens/issues/320),
 and pinned by `survey_0_10::unsupported_reports_sequences_the_shadow_parser_does_implement`,
 whose failure message says what to do when the defect is fixed.
 
+### 13.5 A latent race the second platform found
+
+The deep run passed on Linux and failed on macOS with one test:
+`g1_click_takes_col_row_while_find_returns_row_col`, on `Error::Write` —
+`Input/output error (os error 5)` writing to the master.
+
+Nothing termlens changed caused it. The test uses the shared `raw()` helper,
+which keeps its child alive with `head -c 1` — exactly one byte — and then
+sends **two** full SGR mouse sequences. The child is gone before the second
+one, so the write lands on a closed PTY. Linux had been winning that race for
+as long as the test existed; macOS lost it.
+
+It is worth recording because of what found it. Not review, not the suite on
+one machine, but the tier's rule that the deep run goes to both platforms
+before a version bump merges. The fix is one line — `cat >/dev/null` instead
+of `head -c 1` — and the finding is that a green suite on one OS is a claim
+about one OS.
+
 ## 14. Ranking, revised again
 
 §12 ranked five items. One shipped:
