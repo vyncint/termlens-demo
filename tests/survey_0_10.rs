@@ -142,9 +142,26 @@ fn wait_until_matches_is_an_expect_style_wait_on_the_grid() -> termlens::Result<
     t.wait_frame(|s| s.contains("FILTER"))?;
     t.paste("core")?;
     t.send(Key::Enter)?;
-    // The count drops to a single digit once the filter applies.
-    let screen = t.wait_until_matches(&filtered)?;
-    assert!(screen.contains("filter:core"), "{screen}");
+
+    // The pattern *is* the wait, and only what the pattern proves is
+    // asserted about the screen it returns. `wait_until_matches` is a
+    // `wait_until`: like every member of that family it can resolve on a
+    // frame still being painted (§7.4), so a second assertion about a
+    // different part of the same value is a race — one macOS lost while
+    // Linux won it. The settled read is taken separately.
+    let matched = t.wait_until_matches(&filtered)?;
+    assert!(
+        matched.matches(&filtered),
+        "it returns the screen it matched"
+    );
+
+    let settled = t.snapshot_after(|s| s.contains("filter:core"))?;
+    let count = regex::Regex::new(r"tasks \((\d+)\)").unwrap();
+    let (_, _, text) = settled.find_match(&count).expect("the pane title");
+    assert_ne!(
+        text, "tasks (13)",
+        "the filter narrowed the list:\n{settled}"
+    );
     Ok(())
 }
 

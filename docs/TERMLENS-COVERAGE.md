@@ -941,7 +941,7 @@ the knob — so neither half can rot unnoticed again.
 | **Snapshot macro** | `assert_screen_snapshot!(t, after = …)` waits, settles and records styles in one line |
 | **0.7–0.9 catch-up** | `bin!`, `snapshot_after`, `wait_stable`, `mouse_modes`, `cursor_shape`/`cursor_blink`, `Screen: PartialEq`, `envs` |
 
-Two of those needed a second attempt, and both taught something.
+Three of those needed a second attempt, and each taught something.
 
 `to_ansi` was first checked by replaying it into a second PTY. That measures
 the kernel, not the rendering: a 90x26 repaint is tens of kilobytes and the
@@ -953,6 +953,13 @@ The mask test first asserted `row_text().len()` was unchanged. That is
 the assertion failed on a mask that had done exactly the right thing. The
 invariant is columns, and it is now asserted as columns — the text after the
 mask is still at the same coordinates.
+
+And the `wait_until_matches` test broke this study's own rule 3. It waited on
+a pattern and then asserted something else about the returned screen —
+`wait_until_matches` is a `wait_until`, so it can resolve on a frame still
+being painted, and the second assertion was a race. Linux won it; macOS did
+not. Writing a test *for* a discipline is no protection against forgetting
+it, which is the argument for keeping the deep run on two platforms.
 
 ### 13.4 A new finding: `unsupported()` reports what the shadow implements
 
