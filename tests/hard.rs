@@ -204,11 +204,10 @@ fn done_titles_are_struck_through_as_well_as_dimmed() -> termlens::Result<()> {
     assert!(!open.dim && !open.strikethrough, "open title: {open:?}");
     assert_eq!(
         done,
-        Style {
-            dim: true,
-            strikethrough: true,
-            ..open
-        },
+        common::style_with(open, |style| {
+            style.dim = true;
+            style.strikethrough = true;
+        }),
         "and nothing else about the two differs"
     );
     Ok(())
@@ -226,11 +225,10 @@ fn the_overdue_badge_blinks_and_plain_red_does_not() -> termlens::Result<()> {
     let badge = *screen.cell(row, col).unwrap().style();
     assert_eq!(
         badge,
-        Style {
-            fg: Color::Indexed(1),
-            blink: true,
-            ..Style::default()
-        },
+        common::style(|style| {
+            style.fg = Color::Indexed(1);
+            style.blink = true;
+        }),
         "the badge is blinking red"
     );
 
@@ -294,22 +292,45 @@ fn a_concealed_field_is_marked_concealed() -> termlens::Result<()> {
     Ok(())
 }
 
-// ============================================ unreachable: outside the grid
+// ================================================ closed: outside the grid
 
-/// The detail pane's `open ref` label is an `OSC 8` hyperlink. The label is
-/// on the grid; the target is nowhere — not in the text, not in the title,
-/// not in any accessor.
+/// **Closed by 0.7, and this pin had gone stale for four minor versions.**
+/// It asserted the target was "nowhere — not in the text, not in the title,
+/// not in any accessor", and kept passing because it only ever checked the
+/// grid and the title. `Screen::links` arrived in 0.7 and reports exactly
+/// what the pin said was unreachable.
+///
+/// The half that is still true is worth keeping and is the interesting half:
+/// a link is a record of what the application *emitted*, not a property of a
+/// cell, so the label is on the grid and the target is beside it — no `Cell`
+/// carries its link, and which cells sit inside the span is still not
+/// assertable.
 #[test]
-fn the_hyperlink_target_is_unobservable() -> termlens::Result<()> {
+fn the_hyperlink_target_is_reported_beside_the_grid() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
 
     assert!(screen.contains("link     open ref"), "{screen}");
     assert!(
         !screen.contains("example.invalid"),
-        "the URL is not on the grid:\n{screen}"
+        "the URL is still not *on* the grid:\n{screen}"
     );
     assert!(!screen.title().contains("example.invalid"));
+
+    // But it is observable, which is what 0.7 changed.
+    let link = screen
+        .links()
+        .iter()
+        .find(|link| link.uri().contains("example.invalid"))
+        .expect("the OSC 8 span was captured");
+    assert_eq!(link.uri(), "https://example.invalid/rfc/pty-reader");
+    assert_eq!(link.label(), Some("open ref"), "the text it wrapped");
+    assert!(link.closed(), "taskboard closes the span it opens");
+
+    // Still outside the model: a cell does not know it is inside a link.
+    let (row, col) = screen.find("open ref").expect("the label");
+    let cell = screen.cell(row, col).expect("in bounds");
+    assert_eq!(cell.contents(), "o");
     Ok(())
 }
 

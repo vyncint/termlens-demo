@@ -56,13 +56,42 @@ pub fn spawn_args(args: &[&str], timeout: Duration) -> Terminal {
 /// Spawn a plain shell script in a PTY — for probing terminal behaviour that
 /// has nothing to do with the TUI.
 pub fn spawn_sh(script: &str, timeout: Duration) -> Terminal {
+    spawn_sh_sized(script, timeout, 80, 24)
+}
+
+/// [`spawn_sh`] at an explicit size.
+///
+/// Needed since termlens 0.8, which refuses a mouse coordinate outside the
+/// grid *before* consulting the encoding: probing what an encoding can carry
+/// now requires a terminal wide enough to hold the column being probed.
+pub fn spawn_sh_sized(script: &str, timeout: Duration, cols: u16, rows: u16) -> Terminal {
     Terminal::builder()
-        .size(80, 24)
+        .size(cols, rows)
         .env_clear()
         .timeout(timeout)
         .args(["-c", script])
         .spawn("/bin/sh")
         .expect("spawn /bin/sh")
+}
+
+/// A `Style` built by applying `f` to `base`.
+///
+/// `Style` became `#[non_exhaustive]` in termlens 0.10, so a consumer can no
+/// longer write `Style { dim: true, ..base }` — the crate reserves the right
+/// to add attributes without a major bump, which is the whole point of the
+/// marker. Assertions that mean "this style and nothing else" still want a
+/// whole value to compare against, so they build one here. A closure rather
+/// than `let mut` + field assignment because `clippy::field_reassign_with_default`
+/// is denied in this repository's CI.
+pub fn style_with(base: termlens::Style, f: impl FnOnce(&mut termlens::Style)) -> termlens::Style {
+    let mut style = base;
+    f(&mut style);
+    style
+}
+
+/// [`style_with`] from the default style.
+pub fn style(f: impl FnOnce(&mut termlens::Style)) -> termlens::Style {
+    style_with(termlens::Style::default(), f)
 }
 
 /// The style of the first cell of `needle`. Panics if the text isn't on

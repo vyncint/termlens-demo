@@ -60,7 +60,7 @@ untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 cargo test
 ```
 
-**150 tests**, against termlens 0.6.0.
+**176 tests**, against termlens 0.10.1.
 
 - **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
   cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
@@ -69,7 +69,7 @@ cargo test
   the board, the frame burst, the capability probe, the clipboard payload,
   the three style attributes — and one passing test per thing taskboard
   demonstrably does that *still* no assertion can reach.
-- **`tests/limits.rs`** (13) — one passing test per remaining limitation.
+- **`tests/limits.rs`** (14) — one passing test per remaining limitation.
   Mostly **bounds** now rather than absences, and each asserts the mechanism:
   four of the 0.2 pins stayed green against 0.4 while their claims went
   false, and six more did the same on the way to 0.6.
@@ -77,6 +77,10 @@ cargo test
   so each finding is isolated from any application.
 - **`tests/survey_0_2_1.rs`** (18) — what 0.2.1 changed, and what the new
   code brought with it.
+- **`tests/survey_0_10.rs`** (25) — the 0.7 → 0.10.1 surface: search and
+  masks, `diff`, the three renderings, `serde`, `Screen::parse`, recording
+  and the asciicast export, the rebuilt snapshot macro, and the emulator's
+  own honesty accessors.
 - **`tests/survey_0_6_0.rs`** (10) — the inline-graphics surface, probed with
   hand-written escapes whose every byte is known: images counted as images
   rather than as escapes, deletes counted apart, placement, and the pixels
@@ -84,13 +88,34 @@ cargo test
 
 The survey suites print their evidence under `--nocapture`.
 
-## Findings — termlens 0.6
+## Findings — termlens 0.10.1
 
 **[docs/TERMLENS-COVERAGE.md](docs/TERMLENS-COVERAGE.md)** is the write-up:
 the 0.1 → 0.2 study, a deeper pass against 0.2.1 with this harder subject,
-§7–9 for 0.4, then §10–12 for 0.6. **Three of the five items §9 ranked have
-shipped** — the same score as last time.
+§7–9 for 0.4, §10–12 for 0.6, then **§13–14 for the jump to 0.10.1**. One of
+the five items §12 ranked has shipped, and a new one went straight to the top
+of the list.
 
+- **Two pins had been false for four minor versions, and kept passing.**
+  `the_hyperlink_target_is_unobservable` asserted an `OSC 8` target was "not
+  in any accessor"; `Screen::links` has reported it since **0.7**. The pin
+  survived because it only ever checked the grid and the title — the symptom
+  the closed gap still shares. The scrollback-styles pin was narrowed from a
+  limitation to a default by 0.10 and had to be split in two. A green suite is
+  evidence that nothing regressed and no evidence that its claims are current.
+- **A new finding, reported upstream.** `Screen::unsupported()` — 0.10's
+  "what did the emulator drop?" accessor — names `^[[5m`, `^[[25m`, `^[[9m`
+  and `^[[29m`, the four SGR parameters the attribute shadow exists to
+  recover. On the same screen `Style::blink` is correct. So the accessor makes
+  a *working* assertion look unreliable, and
+  `assert!(screen.unsupported().is_empty())` is unwritable for any app that
+  blinks. [termlens#320](https://github.com/vyncint/termlens/issues/320).
+- **The upgrade broke 8 tests, every one a documented change.** `Style` went
+  `#[non_exhaustive]`, `drag` took four column-first arguments instead of two
+  pairs, the snapshot macro was rebuilt around a snapshot *source*, and an
+  invalid geometry got its own `Error::Size`. Two mouse probes failed with
+  their findings intact — 0.8 refuses an off-grid coordinate before consulting
+  the encoding, so probing what an encoding carries now needs a wider grid.
 - **A finding about the study first, again.** Bumping the dependency and
   changing nothing else left 5 tests failing and **6 passing that should have
   failed** — in three shapes, only one of which the 0.4 pass had seen. A pin
@@ -125,6 +150,9 @@ shipped** — the same score as last time.
   one silent change that cost more to find than either: `drag` now reports one
   motion per cell crossed, which pushed a fixed-size wire read off the end of
   the gesture it was measuring.
-- Still open: the 222 guard firing before the encoding match, styles in
-  scrollback and in `rect_text`, `OSC 52` reads, hyperlink targets,
-  `DECSCUSR`, palette overrides — and no opt-out from a torn `screen()`.
+- Closed since 0.6: **hyperlink targets** (`Screen::links`, 0.7),
+  **`DECSCUSR`** (`cursor_shape`/`cursor_blink`, 0.7) and **styles in
+  scrollback** (`scrollback_styles`, 0.10).
+- Still open: `unsupported()` naming what the shadow implements, the 222 guard
+  firing before the encoding match, styles in `rect_text`, `OSC 52` reads,
+  palette overrides — and no opt-out from a torn `screen()`.
