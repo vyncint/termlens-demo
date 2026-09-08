@@ -88,8 +88,17 @@ jobs:
           # An exact requirement, so this job measures the newest published
           # version even across a major bump that the recorded requirement
           # would not admit.
-          cargo add "termlens@=$VERSION" --dev --features decode
+          #
+          # Every feature the suite uses is named. `cargo add` merges rather
+          # than replaces, so omitting one happened to keep working — but a
+          # feature dropped from Cargo.toml would then be dropped here too,
+          # and the deep run would quietly measure less than the suite does.
+          cargo add "termlens@=$VERSION" --dev --features decode,regex,serde
           cargo tree -i termlens --depth 0
+          # `tests/cli.rs` installs the matching termlens-cli from crates.io,
+          # reading the version out of the lockfile this step just wrote — so
+          # the deep run also answers "does `cargo install termlens-cli`
+          # produce a tool that reads this suite's saved screens?".
 
       - name: Test
         run: cargo test -- --nocapture

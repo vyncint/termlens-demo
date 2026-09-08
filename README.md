@@ -60,7 +60,7 @@ untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 cargo test
 ```
 
-**176 tests**, against termlens 0.10.1.
+**192 tests**, against termlens 0.10.1.
 
 - **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
   cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
@@ -77,6 +77,17 @@ cargo test
   so each finding is isolated from any application.
 - **`tests/survey_0_2_1.rs`** (18) — what 0.2.1 changed, and what the new
   code brought with it.
+- **`tests/skill.rs`** (10) — the skill termlens ships for coding agents,
+  executed against a real application. Its own CI *compiles* the snippets
+  against a stub whose `main` is empty, which proves the API exists and
+  cannot prove the advice is true; these are the same rules as mechanisms,
+  measured against something that draws.
+- **`tests/cli.rs`** (5) — `termlens-cli`, installed from crates.io at the
+  version under test, reading the `.snap` files this suite committed. Includes
+  the one check only a PTY harness can make of a terminal tool: that `diff`
+  colours on a terminal and stays plain in a pipe.
+- **`tests/artifact.rs`** (1) — `TERMLENS_ARTIFACT_DIR`: a failing wait's
+  screen written where a CI step can render it.
 - **`tests/survey_0_10.rs`** (25) — the 0.7 → 0.10.1 surface: search and
   masks, `diff`, the three renderings, `serde`, `Screen::parse`, recording
   and the asciicast export, the rebuilt snapshot macro, and the emulator's
