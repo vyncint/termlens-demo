@@ -91,7 +91,15 @@ cargo test
 - **`tests/survey_0_10.rs`** (25) — the 0.7 → 0.10.1 surface: search and
   masks, `diff`, the three renderings, `serde`, `Screen::parse`, recording
   and the asciicast export, the rebuilt snapshot macro, and the emulator's
-  own honesty accessors.
+  own honesty accessors. One test here has since flipped: the
+  `unsupported()` probe pinned termlens#320 as a defect and now pins its
+  fix, which is what a pin written to fail on the good news is for.
+- **`tests/survey_0_11.rs`** (9) — the stability candidate's surface: the
+  `Unsupported` view that replaced the `Arc<str>` slice (including a record
+  driven past its retention bound, which no application here produces on its
+  own), `cursor_visible`, the `Location` accessors, `ScreenDiff::changed_rows`
+  and `style_changes`, `Display for Color`, the nameable `ScreenWithStyles`,
+  and the JSON's format number.
 - **`tests/survey_0_6_0.rs`** (10) — the inline-graphics surface, probed with
   hand-written escapes whose every byte is known: images counted as images
   rather than as escapes, deletes counted apart, placement, and the pixels
@@ -99,7 +107,7 @@ cargo test
 
 The survey suites print their evidence under `--nocapture`.
 
-## Findings — termlens 0.10.1
+## Findings — termlens 0.11.0
 
 **[docs/TERMLENS-COVERAGE.md](docs/TERMLENS-COVERAGE.md)** is the write-up:
 the 0.1 → 0.2 study, a deeper pass against 0.2.1 with this harder subject,

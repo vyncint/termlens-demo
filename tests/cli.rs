@@ -18,7 +18,7 @@ use std::process::{Command, Output};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use termlens::{Color, Terminal};
+use termlens::{Color, Screen, Terminal};
 
 mod common;
 
@@ -172,8 +172,16 @@ fn diff_exits_zero_one_and_two() {
 
 /// `inspect` runs a program in a PTY and prints what it drew — pointed at
 /// this repository's own binary, which is the use the tool exists for.
+///
+/// **The streams are split, as of termlens 0.11 (termlens#340).** The screen
+/// alone goes to stdout and the trailer that says what the program did goes
+/// to stderr, so `termlens inspect prog > file` saves a file `termlens
+/// render` and `termlens diff` read back. Against 0.10.x the trailer
+/// followed the screen on stdout and no CLI route produced a file the CLI
+/// would accept; this test asserted the trailer was in stdout and is the
+/// reason that change was visible from outside.
 #[test]
-fn inspect_drives_taskboard_and_reports_what_it_exited_as() {
+fn inspect_drives_taskboard_and_its_stdout_is_a_saved_screen() {
     let out = Command::new(cli())
         .args(["inspect", "--size", "90x26", "--idle", "400"])
         .arg(env!("CARGO_BIN_EXE_taskboard"))
@@ -185,18 +193,50 @@ fn inspect_drives_taskboard_and_reports_what_it_exited_as() {
         String::from_utf8_lossy(&out.stderr)
     );
     let screen = String::from_utf8_lossy(&out.stdout);
+    let trailer = String::from_utf8_lossy(&out.stderr);
+
     assert!(screen.contains("size: 90x26"), "{screen}");
     assert!(
         screen.contains("Wire up the PTY reader"),
         "the real grid:\n{screen}"
     );
     assert!(screen.contains("NORMAL"), "the status bar");
+
     // taskboard never exits on its own, so inspect reports the deadline
-    // rather than an exit status — and says which.
+    // rather than an exit status — on stderr, and says which.
     assert!(
-        screen.contains("still running at the deadline"),
-        "the trailer says what the program did:\n{screen}"
+        trailer.contains("still running at the deadline"),
+        "the trailer says what the program did, on stderr:\n{trailer}"
     );
+    assert!(
+        !screen.contains("--- still running"),
+        "and not on stdout, which is a saved screen:\n{screen}"
+    );
+
+    // The claim that makes the split worth having: what a redirect captures
+    // is a screen the library parses and the tool reads back.
+    let parsed = Screen::parse(&screen).expect("inspect's stdout is a saved screen");
+    assert_eq!(parsed.size(), (90, 26));
+    assert!(parsed.find("Wire up the PTY reader").is_some(), "{parsed}");
+
+    let saved =
+        std::env::temp_dir().join(format!("termlens-demo-inspect-{}.txt", std::process::id()));
+    std::fs::write(&saved, screen.as_bytes()).expect("write the captured screen");
+    let path = saved.to_string_lossy().into_owned();
+    let rendered = run(&["render", "--text", &path]);
+    assert_eq!(
+        rendered.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let same = run(&["diff", "--color", "never", &path, &path]);
+    assert_eq!(
+        same.status.code(),
+        Some(0),
+        "a screen is the same picture as itself"
+    );
+    let _ = std::fs::remove_file(&saved);
 }
 
 /// The one thing only a PTY harness can check about a terminal tool: that it

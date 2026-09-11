@@ -1,5 +1,7 @@
 //! What termlens **0.10** added, probed against the real binary rather than
-//! inferred from the crate. This repository sat on 0.6.1 while 0.7, 0.8, 0.9
+//! inferred from the crate. One test here has since flipped: the
+//! `unsupported()` probe pinned termlens#320 as a defect and now pins its
+//! fix, which is what a pin written to fail on the good news is for. This repository sat on 0.6.1 while 0.7, 0.8, 0.9
 //! and 0.10 shipped, so this suite is the catch-up: the search and mask
 //! surface, the export surface (`diff`, the three renderings, `serde`,
 //! `Screen::parse`), recording, the rebuilt snapshot macro, the emulator's
@@ -525,30 +527,42 @@ fn the_snapshot_macro_settles_and_keeps_styles() -> termlens::Result<()> {
 /// `unsupported()` is the honesty accessor: every sequence the emulator did
 /// not implement, so a plausible-looking grid can be told from a right one.
 ///
-/// **This pins a defect, reported upstream as termlens#320.** taskboard's
-/// blinking badge and struck-through titles are both *observable* —
-/// `hard.rs` asserts them — because the attribute shadow recovers exactly
-/// these SGR parameters after vt100 drops them. They are nevertheless
-/// reported here as unimplemented. `^[[59m` (underline colour) in the same
-/// list is correct: nothing models it.
+/// **This pinned a defect, and now pins its fix.** Against 0.10.1 this test
+/// asserted the opposite: taskboard's blinking badge and struck-through
+/// titles were *observable* — `hard.rs` asserts them, because the attribute
+/// shadow recovers exactly these SGR parameters after vt100 drops them — and
+/// were nevertheless reported here as unimplemented. That was reported as
+/// termlens#320, fixed in termlens 0.10.2, and the old pin said in as many
+/// words that it should become this assertion once it failed. Measured
+/// against the published 0.11.0, from crates.io, driving the real binary.
+///
+/// `^[[59m` (underline colour) stays listed, correctly: nothing models it.
 #[test]
-fn unsupported_reports_sequences_the_shadow_parser_does_implement() -> termlens::Result<()> {
+fn unsupported_no_longer_names_sequences_the_shadow_parser_implements() -> termlens::Result<()> {
     let t = spawn();
     let screen = t.screen();
-    let listed: Vec<&str> = screen.unsupported().iter().map(|q| &**q).collect();
+    let listed: Vec<&str> = screen.unsupported().iter().collect();
 
-    // The badge blinks — measured, not assumed.
+    // The badge blinks and a title is struck through — measured, not assumed.
     let (row, col) = screen.find("! Handle SIGWINCH").expect("the overdue badge");
     assert!(screen.cell(row, col).unwrap().style().blink, "it blinks");
 
-    // And the sequence that made it blink is named as unimplemented.
-    assert!(
-        listed.contains(&"^[[5m"),
-        "termlens#320 — if this fails the defect is fixed, and this pin \
-         should become `assert!(!listed.contains(...))`: {listed:?}"
-    );
-    assert!(listed.contains(&"^[[59m"), "correctly reported: {listed:?}");
-    assert_eq!(screen.unsupported_overflow(), 0, "well under the cap");
+    // And no sequence that reached a cell is named as unimplemented. These
+    // four are what the attribute shadow recovers; before the fix, `^[[5m`
+    // and `^[[9m` were in this list while the attributes were on the grid.
+    for recovered in ["^[[5m", "^[[25m", "^[[9m", "^[[29m"] {
+        assert!(
+            !screen.unsupported().contains(recovered),
+            "termlens#320 is fixed upstream, so {recovered} must not be \
+             listed while its attribute is on a cell: {listed:?}"
+        );
+    }
+
+    // What is left is the real gap, and the view carries the overflow count
+    // too — so `is_empty()` would be false for a truncated record, and this
+    // comparison is the whole record rather than the part of it that fits.
+    assert_eq!(screen.unsupported(), ["^[[59m"], "{listed:?}");
+    assert_eq!(screen.unsupported().overflow(), 0, "well under the cap");
     assert_eq!(screen.visual_bells(), 0, "taskboard rings no visual bell");
     Ok(())
 }
