@@ -205,9 +205,16 @@ fn v8_utf8_mouse_carries_a_click_past_222() -> termlens::Result<()> {
     let row = t.screen().row_text(0);
     println!("--- v8 --- {:?}", row.trim_end());
     // ESC [ M, the left button (32 + 0), column 300 as `c5 8d`, row 5 as
-    // 32 + 6 — the press; the release follows it on the wire.
-    assert!(
-        row.contains("1b 5b 4d 20 c5 8d 26"),
+    // 32 + 6 — the press; the release follows it on the wire. Compared byte
+    // by byte, because BSD `od` pads its columns wider than GNU's.
+    let wire: Vec<&str> = row
+        .split_once("CLICK=")
+        .map_or("", |(_, bytes)| bytes)
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        wire,
+        ["1b", "5b", "4d", "20", "c5", "8d", "26"],
         "a press at column 300 in the UTF-8 encoding: {row:?}"
     );
     Ok(())
