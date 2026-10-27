@@ -60,7 +60,7 @@ untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 cargo test
 ```
 
-**192 tests**, against termlens 0.10.1.
+**201 tests**, against termlens 0.11.7.
 
 - **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
   cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
@@ -76,7 +76,10 @@ cargo test
 - **`tests/survey.rs`** (44) — the same questions asked of plain `/bin/sh`,
   so each finding is isolated from any application.
 - **`tests/survey_0_2_1.rs`** (18) — what 0.2.1 changed, and what the new
-  code brought with it.
+  code brought with it. One test here has since flipped: the mode-1005 probe
+  pinned the 222 guard as a defect until the 0.11.7 bump found it fixed
+  (0.11.2, termlens#395), and now pins the UTF-8 bytes a click past it
+  sends.
 - **`tests/skill.rs`** (10) — the skill termlens ships for coding agents,
   executed against a real application. Its own CI *compiles* the snippets
   against a stub whose `main` is empty, which proves the API exists and
@@ -170,8 +173,9 @@ of the list.
   motion per cell crossed, which pushed a fixed-size wire read off the end of
   the gesture it was measuring.
 - Closed since 0.6: **hyperlink targets** (`Screen::links`, 0.7),
-  **`DECSCUSR`** (`cursor_shape`/`cursor_blink`, 0.7) and **styles in
-  scrollback** (`scrollback_styles`, 0.10).
-- Still open: `unsupported()` naming what the shadow implements, the 222 guard
-  firing before the encoding match, styles in `rect_text`, `OSC 52` reads,
-  palette overrides — and no opt-out from a torn `screen()`.
+  **`DECSCUSR`** (`cursor_shape`/`cursor_blink`, 0.7), **styles in
+  scrollback** (`scrollback_styles`, 0.10), **`unsupported()` naming what
+  the shadow implements** (0.11.0, termlens#320) and **the 222 guard firing
+  before the encoding match** (0.11.2, termlens#395).
+- Still open: styles in `rect_text`, `OSC 52` reads, palette overrides — and
+  no opt-out from a torn `screen()`.

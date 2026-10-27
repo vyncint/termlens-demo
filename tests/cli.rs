@@ -202,10 +202,16 @@ fn inspect_drives_taskboard_and_its_stdout_is_a_saved_screen() {
     );
     assert!(screen.contains("NORMAL"), "the status bar");
 
-    // taskboard never exits on its own, so inspect reports the deadline
-    // rather than an exit status — on stderr, and says which.
+    // taskboard never exits on its own, so inspect reports it still running
+    // rather than an exit status — on stderr, and says what ended the wait.
+    // Since termlens 0.11.3 (termlens#374) the wait ends at whichever comes
+    // first, the program exiting or `--idle` of silence, and a program still
+    // running then reads `still running (killed on exit)`; `still running at
+    // the deadline` is kept for one `--timeout` cut off. taskboard goes quiet
+    // once drawn, so it is the first. Against 0.11.0–0.11.2 inspect waited
+    // the whole `--timeout` and only ever wrote the second.
     assert!(
-        trailer.contains("still running at the deadline"),
+        trailer.contains("--- still running (killed on exit) ---"),
         "the trailer says what the program did, on stderr:\n{trailer}"
     );
     assert!(
