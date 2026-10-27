@@ -593,9 +593,12 @@ fn either_normalization_of_the_title_matches() -> termlens::Result<()> {
 }
 
 /// The audit task's title mixes a ZWJ sequence, a regional-indicator flag
-/// and a VS16 emoji. The grid's column accounting for all three differs
-/// from what a real terminal draws, so the row's rendered width here is not
-/// the width a user sees.
+/// and a VS16 emoji. The grid's column accounting for all three differed
+/// from what a real terminal draws, so the row's rendered width here was not
+/// the width a user sees. Since termlens 0.11.7 (vt100 0.18.1, termlens#608)
+/// the VS16 emoji takes the two columns ratatui lays out for it, and the
+/// row's border lines up in the four snapshots that show it; the ZWJ
+/// sequence and the flag are still laid out a character at a time.
 #[test]
 fn mixed_emoji_widths_land_differently_than_a_real_terminal_draws_them() -> termlens::Result<()> {
     let t = spawn();

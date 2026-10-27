@@ -182,27 +182,41 @@ fn v7_utf8_mouse_encoding_is_used_when_the_app_asks_for_1005() -> termlens::Resu
     Ok(())
 }
 
-/// **Still true, and now behind a second guard.** Since 0.8 an off-grid
-/// coordinate is refused first, so this needs a terminal that can hold
-/// column 300 before the encoding limit is even consulted. Once it is, the
-/// 0.2.1 finding stands unchanged: mode 1005 exists to carry coordinates
-/// past the legacy limit (xterm reaches ~2015) and termlens still stops at
-/// 222, naming the legacy encoding for an application that selected UTF-8.
+/// **Fixed in 0.11.2 (termlens#395), and pinned the other way round since.**
+/// Mode 1005 exists to carry coordinates past the legacy limit (xterm
+/// reaches ~2015), and from 0.2.1 through 0.11.1 termlens refused a click
+/// past 222 anyway, naming the legacy encoding for an application that had
+/// selected UTF-8: the guard ran before the encoding was consulted. This
+/// test pinned that refusal until the 0.11.7 bump, which is how the fix was
+/// seen here. Column 300 now goes out as the scalar 32 + 301 = U+014D, two
+/// UTF-8 bytes, as xterm writes it. Since 0.8 an off-grid coordinate is
+/// refused first, hence the 400-column terminal.
 #[test]
-fn v8_utf8_mouse_still_refuses_past_222_and_blames_the_wrong_encoding() -> termlens::Result<()> {
+fn v8_utf8_mouse_carries_a_click_past_222() -> termlens::Result<()> {
     let mut t = common::spawn_sh_sized(
-        r"stty raw -echo; printf '\033[?1000h\033[?1005hREADY'; head -c 1 >/dev/null",
+        r"stty raw -echo; printf '\033[?1000h\033[?1005hCLICK='; od -An -tx1 -N7 | tr -d '\n'; printf '\r\nDONE\r\n'; head -c 1 >/dev/null",
         Duration::from_secs(3),
         400,
         24,
     );
-    t.wait_until(|s| s.contains("READY"))?;
-    // Mode 1005 exists precisely to carry coordinates past the legacy
-    // limit (xterm goes to ~2015), but the guard runs before the encoding
-    // is consulted.
-    let err = t.click(300, 5).expect_err("refused");
-    println!("--- v8 --- {err}");
-    assert!(err.to_string().contains("legacy mouse encoding"), "{err}");
+    t.wait_until(|s| s.contains("CLICK="))?;
+    t.click(300, 5)?;
+    t.wait_until(|s| s.contains("DONE"))?;
+    let row = t.screen().row_text(0);
+    println!("--- v8 --- {:?}", row.trim_end());
+    // ESC [ M, the left button (32 + 0), column 300 as `c5 8d`, row 5 as
+    // 32 + 6 — the press; the release follows it on the wire. Compared byte
+    // by byte, because BSD `od` pads its columns wider than GNU's.
+    let wire: Vec<&str> = row
+        .split_once("CLICK=")
+        .map_or("", |(_, bytes)| bytes)
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        wire,
+        ["1b", "5b", "4d", "20", "c5", "8d", "26"],
+        "a press at column 300 in the UTF-8 encoding: {row:?}"
+    );
     Ok(())
 }
 
