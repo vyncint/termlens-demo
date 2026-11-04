@@ -18,7 +18,7 @@ size: 90x26  cursor: hidden
 │[~] med  Ship v0.2 style│  space          toggle done          │                        │
 │[ ] low  Windows ConPTY │  /              filter tasks         │                        │
 │[ ] HIGH ! Rotate the ca│  d              delete task          │                        │
-│[ ] med  Audit 👨‍ 🇻🇳 ❤️  │  r              run task             │                        │
+│[ ] med  Audit 👨‍ 🇻🇳 ❤️ │  r              run task             │                        │
 │[ ] low  Trim trailing s│  y              yank title           │                        │
 │                        │  T              high contrast        │                        │
 │                        │  ? or F1        this help            │                        │
