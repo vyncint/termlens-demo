@@ -60,7 +60,7 @@ untestable by frame. 0.3 answers it, and the probe now comes back `yes`.
 cargo test
 ```
 
-**201 tests**, against termlens 0.11.7.
+**201 tests**, against termlens 0.11.8.
 
 - **`tests/tui.rs`** (42) — what termlens covers: text, per-cell styles,
   cursor, wide glyphs, keys and chords, the full mouse API, paste, resize,
